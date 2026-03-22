@@ -496,6 +496,17 @@ local function resolvedCellVariant(appName, screen, layout, window)
   return cell, cellScreen, cellIndex
 end
 
+local function moveWindowToScreen(window, targetScreen)
+  if not window or not targetScreen then
+    return false
+  end
+
+  local targetFrame = targetScreen:frame()
+  window:setTopLeft(targetFrame.x, targetFrame.y)
+
+  return true
+end
+
 local function placeWindowOnScreen(window, targetScreen)
   if not window or not targetScreen then
     return false
@@ -507,6 +518,7 @@ local function placeWindowOnScreen(window, targetScreen)
   end
 
   local targetFrame = targetScreen:fromUnitRect(currentScreen:toUnitRect(window:frame()))
+  moveWindowToScreen(window, targetScreen)
   window:setFrame(targetFrame, 0)
 
   return true
@@ -525,8 +537,10 @@ local function placeManagedWindow(window, appName, targetScreen)
     return false
   end
 
-  hs.grid.set(window, hs.geometry.new(cell), cellScreen or screen)
-  setPreferredWindow(cellScreen or screen, appName, window)
+  local destinationScreen = cellScreen or screen
+  moveWindowToScreen(window, destinationScreen)
+  hs.grid.set(window, hs.geometry.new(cell), destinationScreen)
+  setPreferredWindow(destinationScreen, appName, window)
 
   return true
 end
