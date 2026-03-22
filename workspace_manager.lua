@@ -20,19 +20,7 @@ local state = {
   preferred_windows = {},
 }
 
-local defaultLayoutKeys = {}
-
 local layoutsByKey = {}
-
-local function cloneTable(source)
-  local copy = {}
-
-  for key, value in pairs(source or {}) do
-    copy[key] = value
-  end
-
-  return copy
-end
 
 local function isNonEmptyString(value)
   return type(value) == 'string' and value ~= ''
@@ -245,15 +233,6 @@ local function validateConfig()
     validateLayoutMapping(screenLayouts, 'config.screenLayouts')
   end
 
-  for profile, layoutRef in pairs(defaultLayoutKeys) do
-    if not isNonEmptyString(profile) then
-      configError('config.defaultLayoutKeys keys must be non-empty strings')
-    end
-
-    if not resolveLayout(layoutRef) then
-      configError("config.defaultLayoutKeys['" .. profile .. "'] references unknown layout '" .. tostring(layoutRef) .. "'")
-    end
-  end
 end
 
 function M.configure(config)
@@ -271,10 +250,6 @@ function M.configure(config)
     configError('config.screenLayouts must be a table')
   end
 
-  if config.defaultLayoutKeys ~= nil and type(config.defaultLayoutKeys) ~= 'table' then
-    configError('config.defaultLayoutKeys must be a table')
-  end
-
   apps = config.apps or {}
   layouts = config.layouts or {}
   screenLayouts = config.screenLayouts or {}
@@ -282,7 +257,6 @@ function M.configure(config)
   settingsKey = config.settingsKey or defaultSettingsKey
   openAppReapplyDelaySeconds = config.openAppReapplyDelaySeconds or defaultOpenAppReapplyDelaySeconds
   screenChangeDelaySeconds = config.screenChangeDelaySeconds or defaultScreenChangeDelaySeconds
-  defaultLayoutKeys = cloneTable(config.defaultLayoutKeys or {})
 
   return M
 end
@@ -892,11 +866,6 @@ function M.defaultLayoutKey(screen)
   local sharedDefault = resolveLayout(configuredLayouts.all)
   if sharedDefault then
     return sharedDefault.key
-  end
-
-  local profileFallback = resolveLayout(defaultLayoutKeys[screenProfile])
-  if profileFallback then
-    return profileFallback.key
   end
 
   return layouts[1].key

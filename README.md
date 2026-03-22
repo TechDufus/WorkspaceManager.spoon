@@ -142,8 +142,6 @@ For complete examples, see:
   Per-screen default layout mapping table.
 - `settingsKey`
   `hs.settings` key used for persisted state.
-- `defaultLayoutKeys`
-  Optional profile-to-layout mapping table used after `screenLayouts`.
 - `openAppReapplyDelaySeconds`
   Delay before reapplying after auto-opening apps.
 - `screenChangeDelaySeconds`
@@ -161,29 +159,11 @@ Built-in defaults:
 - `summon.placementDelaySeconds = 0.2`
 - `summon.placementAttempts = 10`
 
-If you do not provide `screenLayouts` or `defaultLayoutKeys`, the first layout in `layouts` is used.
-
-You can opt into profile-aware defaults with `defaultLayoutKeys`:
-
-```lua
-local workspaceManager = hs.loadSpoon('WorkspaceManager')
-  :start({
-    layoutEngine = gridlayout,
-    apps = apps,
-    layouts = layouts,
-    defaultLayoutKeys = {
-      builtin = 'focus',
-      fourk = 'wide',
-      standard = 'wide',
-      ultrawide = 'wide',
-    },
-  })
-```
+If you do not provide `screenLayouts`, the first layout in `layouts` is used for every screen.
 
 ### `screenLayouts`
 
-`screenLayouts` is optional. If omitted, `defaultLayoutKeys` is used when present; otherwise the
-first layout in `layouts` is used.
+`screenLayouts` is optional. If omitted, the first layout in `layouts` is used.
 
 Supported keys:
 
@@ -214,8 +194,7 @@ Resolution order:
 2. `profile:<name>`
 3. bare profile key
 4. `all`
-5. `defaultLayoutKeys[profile]`
-6. first layout in `layouts`
+5. first layout in `layouts`
 
 ### `summon`
 
@@ -293,7 +272,6 @@ cells = {
 - layouts missing keys, names, or cells
 - layouts that reference unknown apps or missing cell indexes
 - invalid `screenLayouts` mappings
-- invalid `defaultLayoutKeys` mappings
 - invalid summon timing config
 
 ## Persistence Model

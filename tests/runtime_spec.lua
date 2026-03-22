@@ -497,24 +497,6 @@ do
 end
 
 do
-  buildEnvironment()
-  local runtime = loadRuntime()
-  local ok, err = pcall(function()
-    runtime.start({
-      layoutEngine = newLayoutEngine(),
-      apps = standardApps(),
-      layouts = standardLayouts(),
-      defaultLayoutKeys = {
-        builtin = 'does-not-exist',
-      },
-    })
-  end)
-
-  assertEqual(ok, false, 'start() should fail when defaultLayoutKeys references an unknown layout')
-  assertContains(err, 'defaultLayoutKeys', 'start() should explain the invalid default layout override')
-end
-
-do
   local env = buildEnvironment()
   local runtime = loadRuntime()
 
@@ -543,29 +525,11 @@ do
     layoutEngine = newLayoutEngine(),
     apps = standardApps(),
     layouts = standardLayouts(),
-    defaultLayoutKeys = {
-      builtin = 'hd',
-      fourk = 'fourk',
-    },
-  })
-
-  assertEqual(runtime.defaultLayoutKey(env.builtin), 'hd', 'defaultLayoutKeys should drive builtin defaults when screenLayouts is absent')
-  assertEqual(runtime.defaultLayoutKey(env.external), 'fourk', 'defaultLayoutKeys should drive profile defaults when screenLayouts is absent')
-end
-
-do
-  local env = buildEnvironment()
-  local runtime = loadRuntime()
-
-  runtime.start({
-    layoutEngine = newLayoutEngine(),
-    apps = standardApps(),
-    layouts = standardLayouts(),
     screenChangeDelaySeconds = 2.5,
   })
 
-  runtime.handleScreenChange()
-  assertEqual(env.timerCalls[#env.timerCalls], 2.5, 'custom screen change delay should be respected')
+  assertEqual(runtime.defaultLayoutKey(env.builtin), 'fullscreen', 'the first layout should be the fallback default when screenLayouts is absent')
+  assertEqual(runtime.defaultLayoutKey(env.external), 'fullscreen', 'the first layout should be the fallback default for every screen when screenLayouts is absent')
 end
 
 do
@@ -590,6 +554,21 @@ do
   })
 
   assertEqual(runtime.defaultLayoutKey(env.builtin), 'fullscreen', 'start() should not leak prior config across reconfiguration')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = standardLayouts(),
+    screenChangeDelaySeconds = 2.5,
+  })
+
+  runtime.handleScreenChange()
+  assertEqual(env.timerCalls[#env.timerCalls], 2.5, 'custom screen change delay should be respected')
 end
 
 do
