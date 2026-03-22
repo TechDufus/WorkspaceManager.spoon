@@ -8,23 +8,43 @@ local screenLayouts = {}
 
 local layoutEngine = nil
 local reapplyTimer = nil
-local settingsKey = 'workspaces.screen_state.v1'
-local openAppReapplyDelaySeconds = 0.5
-local screenChangeDelaySeconds = 1
+local defaultSettingsKey = 'WorkspaceManager.spoon.screen_state.v1'
+local defaultOpenAppReapplyDelaySeconds = 0.5
+local defaultScreenChangeDelaySeconds = 1
+local settingsKey = defaultSettingsKey
+local openAppReapplyDelaySeconds = defaultOpenAppReapplyDelaySeconds
+local screenChangeDelaySeconds = defaultScreenChangeDelaySeconds
 
 local state = {
   screens = {},
   preferred_windows = {},
 }
 
-local defaultLayoutKeys = {
-  builtin = 'fullscreen',
-  fourk = 'fourk',
-  standard = 'hd',
-  ultrawide = 'standard',
-}
+local defaultLayoutKeys = {}
 
 local layoutsByKey = {}
+
+local function cloneTable(source)
+  local copy = {}
+
+  for key, value in pairs(source or {}) do
+    copy[key] = value
+  end
+
+  return copy
+end
+
+local function isNonEmptyString(value)
+  return type(value) == 'string' and value ~= ''
+end
+
+local function isPositiveInteger(value)
+  return type(value) == 'number' and value >= 1 and value % 1 == 0
+end
+
+local function configError(message)
+  error('WorkspaceManager invalid config: ' .. message, 3)
+end
 
 local function rebuildLayoutIndex()
   layoutsByKey = {}
@@ -51,37 +71,218 @@ local function resolveLayout(layoutRef)
 end
 
 local function validateConfig()
-  if not layoutEngine then
-    error('WorkspaceManager requires config.layoutEngine', 2)
+  if layoutEngine == nil then
+    configError('requires config.layoutEngine')
+  end
+
+  if type(layoutEngine) ~= 'table' then
+    configError('config.layoutEngine must be a GridLayout-like table')
+  end
+
+  for _, methodName in ipairs({ 'setApps', 'setLayouts', 'selectLayout' }) do
+    if type(layoutEngine[methodName]) ~= 'function' then
+      configError("config.layoutEngine must respond to '" .. methodName .. "()'")
+    end
   end
 
   if type(apps) ~= 'table' then
-    error('WorkspaceManager requires config.apps', 2)
+    configError('requires config.apps')
   end
 
   if type(layouts) ~= 'table' or #layouts == 0 then
-    error('WorkspaceManager requires config.layouts', 2)
+    configError('requires config.layouts')
+  end
+
+  if not isNonEmptyString(settingsKey) then
+    configError('config.settingsKey must be a non-empty string')
+  end
+
+  if type(openAppReapplyDelaySeconds) ~= 'number' or openAppReapplyDelaySeconds < 0 then
+    configError('config.openAppReapplyDelaySeconds must be a non-negative number')
+  end
+
+  if type(screenChangeDelaySeconds) ~= 'number' or screenChangeDelaySeconds < 0 then
+    configError('config.screenChangeDelaySeconds must be a non-negative number')
+  end
+
+  for appName, appConfig in pairs(apps) do
+    if not isNonEmptyString(appName) then
+      configError('config.apps keys must be non-empty strings')
+    end
+
+    if type(appConfig) ~= 'table' then
+      configError("config.apps['" .. appName .. "'] must be a table")
+    end
+
+    if not isNonEmptyString(appConfig.id) then
+      configError("config.apps['" .. appName .. "'].id must be a non-empty string")
+    end
+  end
+
+  local seenLayoutKeys = {}
+  local seenLayoutNames = {}
+
+  for index, layout in ipairs(layouts) do
+    if type(layout) ~= 'table' then
+      configError('config.layouts[' .. tostring(index) .. '] must be a table')
+    end
+
+    if not isNonEmptyString(layout.key) then
+      configError('config.layouts[' .. tostring(index) .. '].key must be a non-empty string')
+    end
+
+    if not isNonEmptyString(layout.name) then
+      configError("layout '" .. layout.key .. "' must define a non-empty name")
+    end
+
+    if seenLayoutKeys[layout.key] then
+      configError("duplicate layout key '" .. layout.key .. "'")
+    end
+
+    local loweredName = layout.name:lower()
+    if seenLayoutNames[loweredName] then
+      configError("duplicate layout name '" .. layout.name .. "'")
+    end
+
+    seenLayoutKeys[layout.key] = true
+    seenLayoutNames[loweredName] = true
+
+    if type(layout.cells) ~= 'table' or #layout.cells == 0 then
+      configError("layout '" .. layout.key .. "' must define at least one cell")
+    end
+
+    for cellIndex, cellVariants in ipairs(layout.cells) do
+      if type(cellVariants) ~= 'table' then
+        configError("layout '" .. layout.key .. "' cell " .. tostring(cellIndex) .. ' must be a variant array')
+      end
+
+      local variantCount = 0
+      for variantIndex, cellVariant in ipairs(cellVariants) do
+        variantCount = variantCount + 1
+
+        if type(cellVariant) == 'string' then
+          if cellVariant == '' then
+            configError("layout '" .. layout.key .. "' cell " .. tostring(cellIndex) .. ' contains an empty string variant')
+          end
+        elseif type(cellVariant) == 'table' then
+          if not isNonEmptyString(cellVariant.cell) then
+            configError(
+              "layout '" .. layout.key .. "' cell " .. tostring(cellIndex) .. ' variant ' .. tostring(variantIndex)
+              .. " must provide a non-empty 'cell' string"
+            )
+          end
+        else
+          configError(
+            "layout '" .. layout.key .. "' cell " .. tostring(cellIndex) .. ' variant ' .. tostring(variantIndex)
+            .. " must be a string or { cell = '...' } table"
+          )
+        end
+      end
+
+      if variantCount == 0 then
+        configError("layout '" .. layout.key .. "' cell " .. tostring(cellIndex) .. ' must define at least one variant')
+      end
+    end
+
+    if layout.apps ~= nil and type(layout.apps) ~= 'table' then
+      configError("layout '" .. layout.key .. "'.apps must be a table")
+    end
+
+    for appName, appConfig in pairs(layout.apps or {}) do
+      if not apps[appName] then
+        configError("layout '" .. layout.key .. "' references unknown app '" .. tostring(appName) .. "'")
+      end
+
+      if type(appConfig) ~= 'table' then
+        configError("layout '" .. layout.key .. "' app '" .. tostring(appName) .. "' config must be a table")
+      end
+
+      if not isPositiveInteger(appConfig.cell) then
+        configError("layout '" .. layout.key .. "' app '" .. tostring(appName) .. "' must use a positive integer cell index")
+      end
+
+      if not layout.cells[appConfig.cell] then
+        configError(
+          "layout '" .. layout.key .. "' app '" .. tostring(appName) .. "' references missing cell "
+          .. tostring(appConfig.cell)
+        )
+      end
+
+      if appConfig.open ~= nil and type(appConfig.open) ~= 'boolean' then
+        configError("layout '" .. layout.key .. "' app '" .. tostring(appName) .. "'.open must be a boolean when set")
+      end
+    end
+  end
+
+  rebuildLayoutIndex()
+
+  local function validateLayoutMapping(mapping, label)
+    for identifier, layoutRef in pairs(mapping or {}) do
+      if not isNonEmptyString(identifier) then
+        configError(label .. ' keys must be non-empty strings')
+      end
+
+      if not resolveLayout(layoutRef) then
+        configError(
+          label .. "['" .. identifier .. "'] references unknown layout '" .. tostring(layoutRef) .. "'"
+        )
+      end
+    end
+  end
+
+  if type(screenLayouts) ~= 'table' then
+    configError('config.screenLayouts must be a table when provided')
+  end
+
+  local configuredLayouts = screenLayouts.layouts
+  if configuredLayouts ~= nil then
+    if type(configuredLayouts) ~= 'table' then
+      configError('config.screenLayouts.layouts must be a table')
+    end
+
+    validateLayoutMapping(configuredLayouts, 'config.screenLayouts.layouts')
+  else
+    validateLayoutMapping(screenLayouts, 'config.screenLayouts')
+  end
+
+  for profile, layoutRef in pairs(defaultLayoutKeys) do
+    if not isNonEmptyString(profile) then
+      configError('config.defaultLayoutKeys keys must be non-empty strings')
+    end
+
+    if not resolveLayout(layoutRef) then
+      configError("config.defaultLayoutKeys['" .. profile .. "'] references unknown layout '" .. tostring(layoutRef) .. "'")
+    end
   end
 end
 
 function M.configure(config)
   config = config or {}
 
-  apps = config.apps or apps or {}
-  layouts = config.layouts or layouts or {}
-  screenLayouts = config.screenLayouts or screenLayouts or {}
-  layoutEngine = config.layoutEngine or layoutEngine
-  settingsKey = config.settingsKey or settingsKey
-  openAppReapplyDelaySeconds = tonumber(config.openAppReapplyDelaySeconds) or openAppReapplyDelaySeconds
-  screenChangeDelaySeconds = tonumber(config.screenChangeDelaySeconds) or screenChangeDelaySeconds
-
-  if type(config.defaultLayoutKeys) == 'table' then
-    for profile, layoutKey in pairs(config.defaultLayoutKeys) do
-      defaultLayoutKeys[profile] = layoutKey
-    end
+  if config.apps ~= nil and type(config.apps) ~= 'table' then
+    configError('config.apps must be a table')
   end
 
-  rebuildLayoutIndex()
+  if config.layouts ~= nil and type(config.layouts) ~= 'table' then
+    configError('config.layouts must be an array-like table')
+  end
+
+  if config.screenLayouts ~= nil and type(config.screenLayouts) ~= 'table' then
+    configError('config.screenLayouts must be a table')
+  end
+
+  if config.defaultLayoutKeys ~= nil and type(config.defaultLayoutKeys) ~= 'table' then
+    configError('config.defaultLayoutKeys must be a table')
+  end
+
+  apps = config.apps or {}
+  layouts = config.layouts or {}
+  screenLayouts = config.screenLayouts or {}
+  layoutEngine = config.layoutEngine
+  settingsKey = config.settingsKey or defaultSettingsKey
+  openAppReapplyDelaySeconds = config.openAppReapplyDelaySeconds or defaultOpenAppReapplyDelaySeconds
+  screenChangeDelaySeconds = config.screenChangeDelaySeconds or defaultScreenChangeDelaySeconds
+  defaultLayoutKeys = cloneTable(config.defaultLayoutKeys or {})
 
   return M
 end
@@ -405,6 +606,29 @@ local function currentVariantForLayout(screen, layout)
   return variant
 end
 
+local function cellChoicesForLayout(layout)
+  local choices = {}
+
+  for cellIndex, _ in ipairs(layout.cells or {}) do
+    local assignedApps = {}
+
+    for assignedApp, appConfig in pairs(layout.apps or {}) do
+      if appConfig.cell == cellIndex then
+        table.insert(assignedApps, assignedApp)
+      end
+    end
+
+    table.sort(assignedApps)
+    table.insert(choices, {
+      text = 'Cell ' .. tostring(cellIndex),
+      subText = (#assignedApps > 0 and table.concat(assignedApps, ', ')) or '(empty)',
+      cell_index = cellIndex,
+    })
+  end
+
+  return choices
+end
+
 local function appOverrideBucket(screen, layoutKey, create)
   local screenState = ensureScreenState(screen)
   if not screenState then
@@ -670,7 +894,12 @@ function M.defaultLayoutKey(screen)
     return sharedDefault.key
   end
 
-  return defaultLayoutKeys[screenProfile] or layouts[1].key
+  local profileFallback = resolveLayout(defaultLayoutKeys[screenProfile])
+  if profileFallback then
+    return profileFallback.key
+  end
+
+  return layouts[1].key
 end
 
 function M.ensureScreenStates()
@@ -813,22 +1042,7 @@ function M.bindFocusedWindowToCell()
     return
   end
 
-  local choices = {}
-
-  for cellIndex, _ in ipairs(layout.cells or {}) do
-    local assignedApps = {}
-    for assignedApp, appConfig in pairs(layout.apps or {}) do
-      if appConfig.cell == cellIndex then
-        table.insert(assignedApps, assignedApp)
-      end
-    end
-
-    table.insert(choices, {
-      text = 'Cell ' .. tostring(cellIndex),
-      subText = (#assignedApps > 0 and table.concat(assignedApps, ', ')) or '(empty)',
-      cell_index = cellIndex,
-    })
-  end
+  local choices = cellChoicesForLayout(layout)
 
   local chooser = hs.chooser.new(function(choice)
     if not choice then
@@ -858,6 +1072,73 @@ function M.bindFocusedWindowToCell()
   end)
 
   chooser:searchSubText(true):choices(choices):query(''):show()
+end
+
+function M.setAppCell(appName, cellIndex, targetScreen)
+  local screen = targetScreen or screens.focused()
+  local layout = screen and M.currentLayout(screen)
+  local numericCellIndex = tonumber(cellIndex)
+
+  if not screen or not layout or not layout.apps or not layout.apps[appName] then
+    return false
+  end
+
+  if not numericCellIndex or numericCellIndex < 1 or numericCellIndex % 1 ~= 0 or not layout.cells[numericCellIndex] then
+    return false
+  end
+
+  local appOverrides = appOverrideBucket(screen, layout.key, true)
+  local defaultCellIndex = layout.apps[appName].cell
+
+  if numericCellIndex == defaultCellIndex then
+    appOverrides[appName] = nil
+  else
+    appOverrides[appName] = numericCellIndex
+  end
+
+  persistState()
+  M.scheduleReapply(0)
+
+  return true
+end
+
+function M.clearAppCell(appName, targetScreen)
+  local screen = targetScreen or screens.focused()
+  local layout = screen and M.currentLayout(screen)
+  local appOverrides = layout and appOverrideBucket(screen, layout.key, false) or nil
+
+  if not screen or not layout or not layout.apps or not layout.apps[appName] then
+    return false
+  end
+
+  if appOverrides then
+    appOverrides[appName] = nil
+  end
+
+  persistState()
+  M.scheduleReapply(0)
+
+  return true
+end
+
+function M.bindFocusedAppToCell()
+  local window = hs.window.focusedWindow()
+  local screen = window and window:screen()
+  local appName = window and appNameForWindow(window)
+  local layout = screen and M.currentLayout(screen)
+
+  if not window or not screen or not appName or not layout or not layout.apps[appName] then
+    hs.alert.show('Focused app is not managed by the current screen layout')
+    return
+  end
+
+  local chooser = hs.chooser.new(function(choice)
+    if choice then
+      M.setAppCell(appName, choice.cell_index, screen)
+    end
+  end)
+
+  chooser:searchSubText(true):choices(cellChoicesForLayout(layout)):query(''):show()
 end
 
 function M.placeApp(appName, targetScreen, preferredWindow)

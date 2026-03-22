@@ -6,6 +6,12 @@ local function assertEqual(actual, expected, message)
   end
 end
 
+local function assertContains(haystack, needle, message)
+  if not tostring(haystack):find(needle, 1, true) then
+    error(string.format('%s (missing %s in %s)', message, tostring(needle), tostring(haystack)), 2)
+  end
+end
+
 local timerQueue = {}
 local openCalls = {}
 
@@ -137,6 +143,25 @@ local workspaceManager = {
 }
 
 local summon = dofile('./summon.lua')(workspaceManager)
+
+do
+  local invalidSummon = dofile('./summon.lua')(workspaceManager)
+  local ok, err = pcall(function()
+    invalidSummon.start({
+      apps = {
+        Terminal = {
+          id = 'com.mitchellh.ghostty',
+        },
+      },
+      summon = {
+        placementAttempts = -1,
+      },
+    })
+  end)
+
+  assertEqual(ok, false, 'summon.start() should fail on invalid retry counts')
+  assertContains(err, 'placementAttempts', 'summon.start() should explain the invalid retry count')
+end
 
 summon.start({
   apps = {

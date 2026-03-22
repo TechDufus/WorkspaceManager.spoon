@@ -35,18 +35,12 @@ That dependency is explicit. `WorkspaceManager.spoon` expects a configured GridL
 instance to be injected into `:start(config)`. It does not vendor GridLayout, and it does not
 silently load a private copy behind the user's back.
 
-### Current GridLayout Note
+### Screen-Aware Cell Compatibility
 
-Multi-monitor screen-aware cells currently depend on the GridLayout change introduced in:
-
-- `jesseleite/GridLayout.spoon#7`
-
-Until that lands in an upstream release, you need either:
-
-- a local checkout of the PR branch, or
-- a local overlay of the patched `helpers.lua`
-
-If you only use single-screen or legacy non-screen-aware cells, a stock GridLayout release is fine.
+- Plain string cells and per-screen layout selection work with a stock `GridLayout.spoon` release.
+- Explicit `cell.screen` routing is currently verified against `TechDufus/GridLayout.spoon`
+  branch `feat/screen-aware-cells` at commit `f339cc8`.
+- If you depend on `cell.screen`, pin that branch or commit instead of assuming upstream parity.
 
 ## Installation
 
@@ -60,15 +54,29 @@ Then load and compose them from your Hammerspoon config.
 ## Quick Start
 
 ```lua
-local apps = require('apps')
-local layouts = require('layouts')
-local positions = require('positions')
-local screenLayouts = require('screen_layouts')
+local apps = {
+  Terminal = { id = 'com.apple.Terminal' },
+  Browser = { id = 'com.apple.Safari' },
+}
+
+local layouts = {
+  {
+    key = 'focus',
+    name = 'Focus',
+    cells = {
+      { '0,0 80x40' },
+    },
+    apps = {
+      Terminal = { cell = 1, open = true },
+      Browser = { cell = 1 },
+    },
+  },
+}
 
 local gridlayout = hs.loadSpoon('GridLayout')
   :start()
   :setApps(apps)
-  :setGrid(positions.full_grid)
+  :setGrid('80x40')
   :setMargins('5x5')
 
 local workspaceManager = hs.loadSpoon('WorkspaceManager')
@@ -76,7 +84,6 @@ local workspaceManager = hs.loadSpoon('WorkspaceManager')
     layoutEngine = gridlayout,
     apps = apps,
     layouts = layouts,
-    screenLayouts = screenLayouts,
   })
 
 workspaceManager:apply()
@@ -105,6 +112,12 @@ For complete examples, see:
   Clears overrides for the active layout on a screen and resets variant state.
 - `:bindFocusedWindowToCell()`
   Persists a per-window cell override for the focused window.
+- `:bindFocusedAppToCell()`
+  Opens a chooser that persists a per-app cell override for the focused app on the active screen.
+- `:setAppCell(appName, cellIndex[, screen])`
+  Persists a per-app cell override for a screen's active layout and reapplies.
+- `:clearAppCell(appName[, screen])`
+  Removes a per-app override and reverts the app to the layout default cell.
 - `:summon(appName)`
   Opens or focuses an app and places it on the active screen/workspace.
 - `:moveFocusedWindowToNextScreen()`
@@ -130,7 +143,7 @@ For complete examples, see:
 - `settingsKey`
   `hs.settings` key used for persisted state.
 - `defaultLayoutKeys`
-  Fallback profile-to-layout mapping overrides.
+  Optional profile-to-layout mapping table used after `screenLayouts`.
 - `openAppReapplyDelaySeconds`
   Delay before reapplying after auto-opening apps.
 - `screenChangeDelaySeconds`
@@ -142,20 +155,15 @@ For complete examples, see:
 
 Built-in defaults:
 
-- `settingsKey = 'workspaces.screen_state.v1'`
+- `settingsKey = 'WorkspaceManager.spoon.screen_state.v1'`
 - `openAppReapplyDelaySeconds = 0.5`
 - `screenChangeDelaySeconds = 1`
 - `summon.placementDelaySeconds = 0.2`
 - `summon.placementAttempts = 10`
 
-Built-in profile fallback mapping:
+If you do not provide `screenLayouts` or `defaultLayoutKeys`, the first layout in `layouts` is used.
 
-- `builtin -> fullscreen`
-- `fourk -> fourk`
-- `standard -> hd`
-- `ultrawide -> standard`
-
-You can override the profile fallback mapping with `defaultLayoutKeys`:
+You can opt into profile-aware defaults with `defaultLayoutKeys`:
 
 ```lua
 local workspaceManager = hs.loadSpoon('WorkspaceManager')
@@ -164,17 +172,18 @@ local workspaceManager = hs.loadSpoon('WorkspaceManager')
     apps = apps,
     layouts = layouts,
     defaultLayoutKeys = {
-      builtin = 'fullscreen',
-      fourk = 'fullscreen',
-      standard = 'hd',
-      ultrawide = 'fourk',
+      builtin = 'focus',
+      fourk = 'wide',
+      standard = 'wide',
+      ultrawide = 'wide',
     },
   })
 ```
 
 ### `screenLayouts`
 
-`screenLayouts` is optional. If omitted, the profile defaults above are used.
+`screenLayouts` is optional. If omitted, `defaultLayoutKeys` is used when present; otherwise the
+first layout in `layouts` is used.
 
 Supported keys:
 
@@ -190,11 +199,11 @@ Example:
 ```lua
 local screenLayouts = {
   layouts = {
-    primary = 'fourk',
-    ['screen:2'] = 'fullscreen',
-    ['profile:builtin'] = 'fullscreen',
-    ['profile:fourk'] = 'fourk',
-    all = 'hd',
+    primary = 'wide',
+    ['screen:2'] = 'focus',
+    ['profile:builtin'] = 'focus',
+    ['profile:fourk'] = 'wide',
+    all = 'focus',
   },
 }
 ```
@@ -205,7 +214,8 @@ Resolution order:
 2. `profile:<name>`
 3. bare profile key
 4. `all`
-5. built-in profile default
+5. `defaultLayoutKeys[profile]`
+6. first layout in `layouts`
 
 ### `summon`
 
@@ -233,8 +243,8 @@ Minimum app table:
 
 ```lua
 local apps = {
-  Terminal = { id = 'com.mitchellh.ghostty' },
-  Browser = { id = 'com.brave.Browser' },
+  Terminal = { id = 'com.apple.Terminal' },
+  Browser = { id = 'com.apple.Safari' },
 }
 ```
 
@@ -250,8 +260,8 @@ Minimum layout:
 ```lua
 local layouts = {
   {
-    key = 'fullscreen',
-    name = 'Fullscreen',
+    key = 'focus',
+    name = 'Focus',
     cells = {
       { '0,0 80x40' },
     },
@@ -274,6 +284,18 @@ cells = {
 }
 ```
 
+## Validation
+
+`:start(config)` fails fast on invalid standalone configs. That includes:
+
+- missing required top-level config
+- malformed app definitions
+- layouts missing keys, names, or cells
+- layouts that reference unknown apps or missing cell indexes
+- invalid `screenLayouts` mappings
+- invalid `defaultLayoutKeys` mappings
+- invalid summon timing config
+
 ## Persistence Model
 
 Persisted state includes:
@@ -289,7 +311,9 @@ Preferred window tracking is intentionally runtime-only and is not persisted.
 
 - single-window moves should not trigger a full workspace flicker
 - `moveFocusedWindowToNextScreen()` is focused-window-only
+- per-app overrides set the default slot for a managed app on the active screen/layout
 - per-window `bindFocusedWindowToCell()` overrides can coexist with default app slots
+- per-window overrides win over per-app overrides for the same window
 - if only one screen is present, next/previous screen movement is a no-op
 - cross-screen terminal moves intentionally do a fast two-step move-then-snap to avoid wrong-size frames on terminal-like apps
 
@@ -306,16 +330,22 @@ luac -p init.lua workspace_manager.lua screens.lua summon.lua
 ```sh
 lua tests/runtime_spec.lua
 lua tests/summon_spec.lua
+lua tests/init_spec.lua
 ```
+
+GitHub Actions runs the same parser and spec checks on pushes and pull requests.
 
 ### What the current test harness covers
 
 - config validation for missing required keys
+- config validation for malformed layouts and unknown layout references
 - screen default resolution order
 - custom screen-change reapply delay
 - focused-window move behavior that pre-moves onto the destination screen before snapping
+- persisted per-app override reload behavior
 - persisted per-window override reload behavior
 - summon retry timing and placement retry cut-off
+- `init.lua` watcher lifecycle and wrapper forwarding
 
 ### Real Hammerspoon testing
 
@@ -347,6 +377,8 @@ That lets you test:
   Plain-Lua regression harness.
 - [tests/summon_spec.lua](tests/summon_spec.lua)
   Summon/open/focus regression harness.
+- [tests/init_spec.lua](tests/init_spec.lua)
+  Spoon entrypoint and watcher lifecycle smoke test.
 - [examples/single_monitor.lua](examples/single_monitor.lua)
   Minimal single-screen composition example.
 - [examples/multi_monitor.lua](examples/multi_monitor.lua)

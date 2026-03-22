@@ -11,6 +11,10 @@ return function(workspaceManager)
   local placementDelaySeconds = defaultPlacementDelaySeconds
   local placementAttempts = defaultPlacementAttempts
 
+  local function configError(message)
+    error('WorkspaceManager invalid summon config: ' .. message, 3)
+  end
+
   local function appIdentity(app)
     if not app then
       return nil
@@ -90,10 +94,37 @@ return function(workspaceManager)
 
   function M.start(config)
     config = config or {}
-    apps = config.apps or {}
+
+    if config.apps ~= nil and type(config.apps) ~= 'table' then
+      configError('config.apps must be a table')
+    end
+
     local summonConfig = config.summon or {}
-    placementDelaySeconds = tonumber(summonConfig.placementDelaySeconds) or defaultPlacementDelaySeconds
-    placementAttempts = tonumber(summonConfig.placementAttempts) or defaultPlacementAttempts
+    if config.summon ~= nil and type(config.summon) ~= 'table' then
+      configError('config.summon must be a table')
+    end
+
+    if summonConfig.placementDelaySeconds ~= nil then
+      local configuredDelay = tonumber(summonConfig.placementDelaySeconds)
+      if not configuredDelay or configuredDelay < 0 then
+        configError('config.summon.placementDelaySeconds must be a non-negative number')
+      end
+      placementDelaySeconds = configuredDelay
+    else
+      placementDelaySeconds = defaultPlacementDelaySeconds
+    end
+
+    if summonConfig.placementAttempts ~= nil then
+      local configuredAttempts = tonumber(summonConfig.placementAttempts)
+      if not configuredAttempts or configuredAttempts < 0 or configuredAttempts % 1 ~= 0 then
+        configError('config.summon.placementAttempts must be a non-negative integer')
+      end
+      placementAttempts = configuredAttempts
+    else
+      placementAttempts = defaultPlacementAttempts
+    end
+
+    apps = config.apps or {}
 
     if not focusWatcher then
       focusWatcher = hs.window.filter.new():subscribe(hs.window.filter.windowFocused, trackFocusedWindow)

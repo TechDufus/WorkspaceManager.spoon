@@ -84,6 +84,21 @@ function M:bindFocusedWindowToCell()
   return self
 end
 
+function M:bindFocusedAppToCell()
+  runtime.bindFocusedAppToCell()
+  return self
+end
+
+function M:setAppCell(appName, cellIndex, targetScreen)
+  runtime.setAppCell(appName, cellIndex, targetScreen)
+  return self
+end
+
+function M:clearAppCell(appName, targetScreen)
+  runtime.clearAppCell(appName, targetScreen)
+  return self
+end
+
 function M:summon(appName)
   summon.summon(appName)
   return self

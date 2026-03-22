@@ -426,6 +426,95 @@ do
 end
 
 do
+  buildEnvironment()
+  local runtime = loadRuntime()
+  local ok, err = pcall(function()
+    runtime.start({
+      layoutEngine = newLayoutEngine(),
+      apps = standardApps(),
+      layouts = {
+        {
+          name = 'Fullscreen',
+          cells = {
+            { '0,0 80x40' },
+          },
+          apps = {
+            Terminal = { cell = 1 },
+          },
+        },
+      },
+    })
+  end)
+
+  assertEqual(ok, false, 'start() should fail when a layout key is missing')
+  assertContains(err, '.key', 'start() should explain the missing layout key')
+end
+
+do
+  buildEnvironment()
+  local runtime = loadRuntime()
+  local ok, err = pcall(function()
+    runtime.start({
+      layoutEngine = newLayoutEngine(),
+      apps = standardApps(),
+      layouts = {
+        {
+          key = 'fullscreen',
+          name = 'Fullscreen',
+          cells = {
+            { '0,0 80x40' },
+          },
+          apps = {
+            Browser = { cell = 1 },
+          },
+        },
+      },
+    })
+  end)
+
+  assertEqual(ok, false, 'start() should fail when a layout references an unknown app')
+  assertContains(err, 'unknown app', 'start() should explain the unknown app reference')
+end
+
+do
+  buildEnvironment()
+  local runtime = loadRuntime()
+  local ok, err = pcall(function()
+    runtime.start({
+      layoutEngine = newLayoutEngine(),
+      apps = standardApps(),
+      layouts = standardLayouts(),
+      screenLayouts = {
+        layouts = {
+          primary = 'does-not-exist',
+        },
+      },
+    })
+  end)
+
+  assertEqual(ok, false, 'start() should fail when screenLayouts references an unknown layout')
+  assertContains(err, 'unknown layout', 'start() should explain the invalid screen layout mapping')
+end
+
+do
+  buildEnvironment()
+  local runtime = loadRuntime()
+  local ok, err = pcall(function()
+    runtime.start({
+      layoutEngine = newLayoutEngine(),
+      apps = standardApps(),
+      layouts = standardLayouts(),
+      defaultLayoutKeys = {
+        builtin = 'does-not-exist',
+      },
+    })
+  end)
+
+  assertEqual(ok, false, 'start() should fail when defaultLayoutKeys references an unknown layout')
+  assertContains(err, 'defaultLayoutKeys', 'start() should explain the invalid default layout override')
+end
+
+do
   local env = buildEnvironment()
   local runtime = loadRuntime()
 
@@ -454,11 +543,53 @@ do
     layoutEngine = newLayoutEngine(),
     apps = standardApps(),
     layouts = standardLayouts(),
+    defaultLayoutKeys = {
+      builtin = 'hd',
+      fourk = 'fourk',
+    },
+  })
+
+  assertEqual(runtime.defaultLayoutKey(env.builtin), 'hd', 'defaultLayoutKeys should drive builtin defaults when screenLayouts is absent')
+  assertEqual(runtime.defaultLayoutKey(env.external), 'fourk', 'defaultLayoutKeys should drive profile defaults when screenLayouts is absent')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = standardLayouts(),
     screenChangeDelaySeconds = 2.5,
   })
 
   runtime.handleScreenChange()
   assertEqual(env.timerCalls[#env.timerCalls], 2.5, 'custom screen change delay should be respected')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = standardLayouts(),
+    screenLayouts = {
+      layouts = {
+        all = 'hd',
+      },
+    },
+  })
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = standardLayouts(),
+  })
+
+  assertEqual(runtime.defaultLayoutKey(env.builtin), 'fullscreen', 'start() should not leak prior config across reconfiguration')
 end
 
 do
@@ -515,6 +646,64 @@ do
   reloadedRuntime.apply()
 
   assertEqual(reloadedEngine.layouts[1].cells[1][1].cell, '40,0 40x40', 'reloaded state should restore the persisted per-window override cell')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = 'workspace-manager.app-override-spec',
+  })
+
+  runtime.bindFocusedAppToCell()
+  assertEqual(#env.chooserChoices(), 2, 'focused-app binding should offer each layout cell as a target')
+
+  env.choose({
+    cell_index = 2,
+  })
+
+  local persisted = env.storedSettings['workspace-manager.app-override-spec']
+  local screenState = persisted.screens['builtin-uuid']
+
+  assertEqual(screenState.app_overrides.fullscreen.Terminal, 2, 'binding should persist the focused app override')
+
+  local reloadedRuntime = loadRuntime()
+  local reloadedEngine = newLayoutEngine()
+
+  reloadedRuntime.start({
+    layoutEngine = reloadedEngine,
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = 'workspace-manager.app-override-spec',
+  })
+  reloadedRuntime.apply()
+
+  assertEqual(reloadedEngine.layouts[1].cells[1][1].cell, '40,0 40x40', 'reloaded state should restore the persisted app override cell')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+  })
+
+  runtime.bindFocusedAppToCell()
+  env.choose({
+    cell_index = 2,
+  })
+
+  local persisted = env.storedSettings['WorkspaceManager.spoon.screen_state.v1']
+
+  assertEqual(type(persisted), 'table', 'default state should be persisted under the spoon-specific settings key')
+  assertEqual(persisted.screens['builtin-uuid'].app_overrides.fullscreen.Terminal, 2, 'default settings key should preserve persisted overrides')
 end
 
 print('runtime_spec ok')

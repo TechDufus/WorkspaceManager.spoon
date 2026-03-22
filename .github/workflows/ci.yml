@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  lua-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Lua 5.4
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+
+      - name: Parse Lua sources
+        run: luac5.4 -p init.lua workspace_manager.lua screens.lua summon.lua tests/init_spec.lua tests/runtime_spec.lua tests/summon_spec.lua
+
+      - name: Run runtime spec
+        run: lua5.4 tests/runtime_spec.lua
+
+      - name: Run summon spec
+        run: lua5.4 tests/summon_spec.lua
+
+      - name: Run init spec
+        run: lua5.4 tests/init_spec.lua

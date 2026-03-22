@@ -1,12 +1,12 @@
 local apps = {
-  Terminal = { id = 'com.mitchellh.ghostty' },
-  Browser = { id = 'com.brave.Browser' },
+  Terminal = { id = 'com.apple.Terminal' },
+  Browser = { id = 'com.apple.Safari' },
 }
 
 local layouts = {
   {
-    key = 'fullscreen',
-    name = 'Fullscreen',
+    key = 'focus',
+    name = 'Focus',
     cells = {
       { '0,0 80x40' },
     },
@@ -34,4 +34,8 @@ workspaceManager:apply()
 
 hs.hotkey.bind({ 'cmd' }, 'u', function()
   workspaceManager:bindFocusedWindowToCell()
+end)
+
+hs.hotkey.bind({ 'shift', 'cmd' }, 'u', function()
+  workspaceManager:bindFocusedAppToCell()
 end)

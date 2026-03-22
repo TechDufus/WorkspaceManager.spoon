@@ -1,48 +1,48 @@
 local positions = {
   full_grid = '80x40',
   full = '0,0 80x40',
-  fourk_left = '0,0 52x40',
-  fourk_right = '52,0 28x40',
+  wide_left = '0,0 52x40',
+  wide_right = '52,0 28x40',
 }
 
 local apps = {
-  Terminal = { id = 'com.mitchellh.ghostty' },
-  Browser = { id = 'com.brave.Browser' },
-  Chat = { id = 'Mattermost.Desktop' },
+  Terminal = { id = 'com.apple.Terminal' },
+  Browser = { id = 'com.apple.Safari' },
+  Notes = { id = 'com.apple.Notes' },
 }
 
 local layouts = {
   {
-    key = 'fourk',
-    name = '4K Workspace',
+    key = 'wide',
+    name = 'Wide Workspace',
     cells = {
-      { positions.fourk_left },
-      { positions.fourk_right },
+      { positions.wide_left },
+      { positions.wide_right },
     },
     apps = {
       Terminal = { cell = 1, open = true },
       Browser = { cell = 2, open = true },
-      Chat = { cell = 2 },
+      Notes = { cell = 2 },
     },
   },
   {
-    key = 'fullscreen',
-    name = 'Fullscreen',
+    key = 'focus',
+    name = 'Focus',
     cells = {
       { positions.full },
     },
     apps = {
       Terminal = { cell = 1, open = true },
       Browser = { cell = 1, open = true },
-      Chat = { cell = 1 },
+      Notes = { cell = 1 },
     },
   },
 }
 
 local screenLayouts = {
   layouts = {
-    ['profile:fourk'] = 'fourk',
-    ['profile:builtin'] = 'fullscreen',
+    ['profile:fourk'] = 'wide',
+    ['profile:builtin'] = 'focus',
   },
 }
 
@@ -72,4 +72,8 @@ end)
 
 hs.hotkey.bind({ 'shift', 'cmd' }, 'o', function()
   workspaceManager:moveFocusedWindowToPreviousScreen()
+end)
+
+hs.hotkey.bind({ 'shift', 'cmd' }, 'u', function()
+  workspaceManager:bindFocusedAppToCell()
 end)
