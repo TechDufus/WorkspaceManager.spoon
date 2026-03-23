@@ -1,6 +1,7 @@
 # WorkspaceManager.spoon
 
-Screen-aware workspace orchestration for Hammerspoon on top of `GridLayout.spoon`.
+Screen-aware workspace orchestration for Hammerspoon on top of
+[`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon).
 
 `WorkspaceManager.spoon` is the stateful layer above your layout engine. It decides which layout
 is active on which screen, remembers per-screen and per-window overrides, handles summon behavior,
@@ -15,7 +16,8 @@ This spoon owns:
 - per-window and per-app cell overrides
 - screen-aware summon behavior
 - focused-window movement between screens
-- orchestration of active layouts through `GridLayout.spoon`
+- orchestration of active layouts through
+  [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon)
 
 This spoon does not own:
 
@@ -29,7 +31,8 @@ composition root.
 
 ## Dependency
 
-`WorkspaceManager.spoon` depends on `GridLayout.spoon`.
+`WorkspaceManager.spoon` depends on
+[`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon).
 
 That dependency is explicit. `WorkspaceManager.spoon` expects a configured GridLayout spoon
 instance to be injected into `:start(config)`. It does not vendor GridLayout, and it does not
@@ -37,8 +40,10 @@ silently load a private copy behind the user's back.
 
 ### Screen-Aware Cell Compatibility
 
-- Plain string cells and per-screen layout selection work with a stock `GridLayout.spoon` release.
-- Explicit `cell.screen` routing is currently verified against `TechDufus/GridLayout.spoon`
+- Plain string cells and per-screen layout selection work with a stock
+  [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) release.
+- Explicit `cell.screen` routing is currently verified against
+  [`TechDufus/GridLayout.spoon`](https://github.com/TechDufus/GridLayout.spoon/tree/feat/screen-aware-cells)
   branch `feat/screen-aware-cells` at commit `f339cc8`.
 - If you depend on `cell.screen`, pin that branch or commit instead of assuming upstream parity.
 
@@ -46,7 +51,7 @@ silently load a private copy behind the user's back.
 
 Install both spoons into `~/.hammerspoon/Spoons/`:
 
-1. `GridLayout.spoon`
+1. [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon)
 2. `WorkspaceManager.spoon`
 
 Then load and compose them from your Hammerspoon config.
@@ -130,7 +135,8 @@ For complete examples, see:
 ### Required keys
 
 - `layoutEngine`
-  A configured `GridLayout.spoon` instance.
+  A configured [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon)
+  instance.
 - `apps`
   App definition table keyed by logical app name.
 - `layouts`
@@ -331,14 +337,15 @@ The highest-signal test setup is:
 
 1. keep your local Hammerspoon config in `~/.hammerspoon/init.lua`
 2. symlink `~/.hammerspoon/Spoons/WorkspaceManager.spoon` to this repo
-3. symlink `~/.hammerspoon/Spoons/GridLayout.spoon` to a local GridLayout checkout
+3. symlink `~/.hammerspoon/Spoons/GridLayout.spoon` to a local
+   [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) checkout
 4. reload Hammerspoon after changes
 
 That lets you test:
 
 - local config
 - external `WorkspaceManager.spoon`
-- external `GridLayout.spoon`
+- external [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon)
 - real monitor hardware
 
 ## Repository Layout
