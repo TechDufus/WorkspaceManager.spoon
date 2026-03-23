@@ -38,6 +38,10 @@ That dependency is explicit. `WorkspaceManager.spoon` expects a configured GridL
 instance to be injected into `:start(config)`. It does not vendor GridLayout, and it does not
 silently load a private copy behind the user's back.
 
+[`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) is excellent work by
+[Jesse Leite](https://github.com/jesseleite). `WorkspaceManager.spoon` intentionally builds on
+that foundation instead of trying to reimplement the layout engine itself.
+
 ### Screen-Aware Cell Compatibility
 
 - Plain string cells and per-screen layout selection work with a stock
