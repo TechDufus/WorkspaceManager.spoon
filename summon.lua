@@ -7,6 +7,7 @@ return function(workspaceManager)
   local apps = {}
   local previousApp = nil
   local currentApp = nil
+  local preferredWindowIdsByApp = {}
   local focusWatcher = nil
   local placementDelaySeconds = defaultPlacementDelaySeconds
   local placementAttempts = defaultPlacementAttempts
@@ -40,6 +41,25 @@ return function(workspaceManager)
     local name = app:name()
 
     return bundleId == identifier or name == identifier or bundleId == fallbackName or name == fallbackName
+  end
+
+  local function windowIdKey(windowOrId)
+    local numericWindowId = nil
+
+    if type(windowOrId) == 'table' or type(windowOrId) == 'userdata' then
+      local ok, windowId = pcall(function()
+        return windowOrId:id()
+      end)
+      numericWindowId = ok and tonumber(windowId) or nil
+    else
+      numericWindowId = tonumber(windowOrId)
+    end
+
+    if not numericWindowId then
+      return nil
+    end
+
+    return tostring(numericWindowId)
   end
 
   local function screenIdentity(screen)
@@ -82,6 +102,18 @@ return function(workspaceManager)
   local function preferredWindow(app, targetScreen)
     if not app then
       return nil
+    end
+
+    local identity = appIdentity(app)
+    local preferredWindowId = identity and preferredWindowIdsByApp[identity] or nil
+    if preferredWindowId then
+      for _, window in ipairs(app:allWindows()) do
+        if window:isStandard() and windowIdKey(window) == preferredWindowId then
+          return window
+        end
+      end
+
+      preferredWindowIdsByApp[identity] = nil
     end
 
     for _, window in ipairs(app:allWindows()) do
@@ -137,10 +169,24 @@ return function(workspaceManager)
   end
 
   local function trackFocusedWindow(win)
-    local app = win and win:application()
+    local app = nil
+    if win and type(win.application) == 'function' then
+      app = win:application()
+    end
     local identity = appIdentity(app)
 
-    if not identity or identity == currentApp then
+    if not identity then
+      return
+    end
+
+    if win and type(win.isStandard) == 'function' and win:isStandard() then
+      local windowId = windowIdKey(win)
+      if windowId then
+        preferredWindowIdsByApp[identity] = windowId
+      end
+    end
+
+    if identity == currentApp then
       return
     end
 
@@ -184,10 +230,15 @@ return function(workspaceManager)
     end
 
     apps = config.apps or {}
+    previousApp = nil
+    currentApp = nil
+    preferredWindowIdsByApp = {}
 
     if not focusWatcher then
       focusWatcher = hs.window.filter.new():subscribe(hs.window.filter.windowFocused, trackFocusedWindow)
     end
+
+    trackFocusedWindow(hs.window.focusedWindow())
 
     return M
   end
@@ -197,6 +248,10 @@ return function(workspaceManager)
       focusWatcher:unsubscribeAll()
       focusWatcher = nil
     end
+
+    previousApp = nil
+    currentApp = nil
+    preferredWindowIdsByApp = {}
 
     return M
   end

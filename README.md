@@ -226,8 +226,10 @@ Summon-specific config is nested under `summon`.
 
 Summoned apps target the screen under the mouse pointer when available, then fall back to the
 focused window's screen, then `hs.screen.mainScreen()`. If the app already has a standard window,
-WorkspaceManager keeps that window on its current screen and reapplies the layout there instead of
-pulling it across monitors.
+WorkspaceManager remembers the most recently focused standard window for each app and prefers that
+window when re-summoning. Existing apps stay on the remembered window's current screen and the
+layout is reapplied there instead of pulling a different window across monitors. When no preferred
+window is known, summon falls back to a standard window already on the invocation screen.
 
 Example:
 

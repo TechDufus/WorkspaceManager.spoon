@@ -34,8 +34,16 @@ local currentWindowScreen = targetScreen
 local alternateWindowScreen = targetScreen
 local currentFocusedScreen = targetScreen
 local currentMouseScreen = nil
+local focusCallback = nil
+local app
 
 local appWindow = {
+  id = function()
+    return 101
+  end,
+  application = function()
+    return app
+  end,
   isStandard = function()
     return true
   end,
@@ -49,6 +57,12 @@ local appWindow = {
 }
 
 local alternateWindow = {
+  id = function()
+    return 202
+  end,
+  application = function()
+    return app
+  end,
   isStandard = function()
     return true
   end,
@@ -64,7 +78,7 @@ local alternateWindow = {
 local currentAppWindows = { appWindow }
 local currentAppFocusedWindow = appWindow
 
-local app = {
+app = {
   bundleID = function()
     return 'com.mitchellh.ghostty'
   end,
@@ -131,7 +145,8 @@ hs = {
       windowFocused = 'windowFocused',
       new = function()
         return {
-          subscribe = function(self)
+          subscribe = function(self, _, callback)
+            focusCallback = callback
             return self
           end,
           unsubscribeAll = function() end,
@@ -279,6 +294,38 @@ summon.summon('Terminal')
 assertEqual(#placementCalls, 1, 'summon should attempt placement when multiple windows exist')
 assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should prefer a window already on the target screen')
 assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should pick the matching on-screen window even when screen objects differ')
+
+resetState()
+currentMouseScreen = targetScreen
+currentWindowScreen = targetScreen
+alternateWindowScreen = secondaryScreen
+currentAppWindows = { appWindow, alternateWindow }
+currentAppFocusedWindow = appWindow
+
+focusCallback(appWindow)
+focusCallback(alternateWindow)
+
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'summon should attempt placement after same-app window focus changes')
+assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should restore the most recently focused window even when another window is on the invocation screen')
+assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should remember the last focused standard window for an app')
+
+resetState()
+currentMouseScreen = targetScreen
+currentWindowScreen = targetScreen
+alternateWindowScreen = secondaryScreen
+currentAppWindows = { appWindow, alternateWindow }
+
+focusCallback(alternateWindow)
+currentAppWindows = { appWindow }
+currentAppFocusedWindow = appWindow
+
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'summon should still attempt placement when the remembered window is gone')
+assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should fall back to an on-screen window when the remembered one no longer exists')
+assertEqual(placementCalls[1].preferred, appWindow, 'summon should clear stale remembered windows and fall back cleanly')
 
 resetState()
 currentMouseScreen = targetScreen
