@@ -12,27 +12,57 @@ local function assertContains(haystack, needle, message)
   end
 end
 
+local function newScreen(name, uuid)
+  return {
+    getUUID = function()
+      return uuid
+    end,
+    name = function()
+      return name
+    end,
+  }
+end
+
 local timerQueue = {}
 local openCalls = {}
 
-local targetScreen = {
-  name = function()
-    return 'Studio Display'
-  end,
-}
+local targetScreen = newScreen('Studio Display', 'studio-display')
+local aliasedTargetScreen = newScreen('Studio Display', 'studio-display')
+local secondaryScreen = newScreen('Built-in Retina Display', 'builtin-display')
+
+local currentWindowScreen = targetScreen
+local alternateWindowScreen = targetScreen
+local currentFocusedScreen = targetScreen
+local currentMouseScreen = nil
 
 local appWindow = {
   isStandard = function()
     return true
   end,
   screen = function()
-    return targetScreen
+    return currentWindowScreen
   end,
   focus = function(self)
     self.focused = true
     return self
   end,
 }
+
+local alternateWindow = {
+  isStandard = function()
+    return true
+  end,
+  screen = function()
+    return alternateWindowScreen
+  end,
+  focus = function(self)
+    self.focused = true
+    return self
+  end,
+}
+
+local currentAppWindows = { appWindow }
+local currentAppFocusedWindow = appWindow
 
 local app = {
   bundleID = function()
@@ -42,10 +72,10 @@ local app = {
     return 'Terminal'
   end,
   allWindows = function()
-    return { appWindow }
+    return currentAppWindows
   end,
   focusedWindow = function()
-    return appWindow
+    return currentAppFocusedWindow
   end,
   activate = function(self)
     self.activated = true
@@ -54,7 +84,7 @@ local app = {
 
 local focusedWindow = {
   screen = function()
-    return targetScreen
+    return currentFocusedScreen
   end,
 }
 
@@ -76,6 +106,10 @@ hs = {
     end,
     open = function(identifier)
       table.insert(openCalls, identifier)
+      if identifier == 'com.brave.Browser' or identifier == 'Browser' then
+        return true
+      end
+
       return app
     end,
     frontmostApplication = function()
@@ -104,6 +138,11 @@ hs = {
         }
       end,
     },
+  },
+  mouse = {
+    getCurrentScreen = function()
+      return currentMouseScreen
+    end,
   },
   screen = {
     mainScreen = function()
@@ -142,6 +181,22 @@ local workspaceManager = {
   end,
 }
 
+local function resetState()
+  placementCalls = {}
+  timerQueue = {}
+  openCalls = {}
+  attempts = 0
+  app.activated = nil
+  appWindow.focused = nil
+  alternateWindow.focused = nil
+  currentMouseScreen = nil
+  currentFocusedScreen = targetScreen
+  currentWindowScreen = targetScreen
+  alternateWindowScreen = targetScreen
+  currentAppWindows = { appWindow }
+  currentAppFocusedWindow = appWindow
+end
+
 local summon = dofile('./summon.lua')(workspaceManager)
 
 do
@@ -168,6 +223,9 @@ summon.start({
     Terminal = {
       id = 'com.mitchellh.ghostty',
     },
+    Browser = {
+      id = 'com.brave.Browser',
+    },
   },
   summon = {
     placementDelaySeconds = 0.05,
@@ -175,13 +233,15 @@ summon.start({
   },
 })
 
+resetState()
 summon.summon('Terminal')
 
-assertEqual(app.activated, true, 'summon should activate an existing app before placing it')
-assertEqual(appWindow.focused, true, 'summon should focus the preferred window before placement retries')
+assertEqual(app.activated, nil, 'summon should not pre-activate an existing standard window before placement')
+assertEqual(appWindow.focused, nil, 'summon should not pre-focus the preferred window before placement retries')
 assertEqual(#placementCalls, 1, 'summon should attempt placement immediately')
 assertEqual(#timerQueue, 1, 'failed placement should schedule a retry')
 assertEqual(timerQueue[1].delay, 0.05, 'retry should use configured placement delay')
+assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should keep an existing app on its current screen')
 
 timerQueue[1].callback()
 
@@ -193,5 +253,42 @@ timerQueue[2].callback()
 assertEqual(#placementCalls, 3, 'second retry should attempt placement again')
 assertEqual(#timerQueue, 2, 'successful placement should stop scheduling additional retries')
 assertEqual(#openCalls, 0, 'existing apps should not be reopened')
+
+resetState()
+currentMouseScreen = targetScreen
+currentFocusedScreen = secondaryScreen
+currentWindowScreen = secondaryScreen
+
+summon.summon('Terminal')
+
+assertEqual(app.activated, nil, 'summon should not pre-activate an existing standard window before placement')
+assertEqual(appWindow.focused, nil, 'summon should not focus an off-screen window before placement')
+assertEqual(#placementCalls, 1, 'mouse-targeted summon should still attempt placement immediately')
+assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should keep an existing app on its current screen even when the mouse is elsewhere')
+
+resetState()
+currentMouseScreen = aliasedTargetScreen
+currentFocusedScreen = secondaryScreen
+currentWindowScreen = secondaryScreen
+alternateWindowScreen = targetScreen
+currentAppWindows = { appWindow, alternateWindow }
+currentAppFocusedWindow = appWindow
+
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'summon should attempt placement when multiple windows exist')
+assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should prefer a window already on the target screen')
+assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should pick the matching on-screen window even when screen objects differ')
+
+resetState()
+currentMouseScreen = targetScreen
+currentFocusedScreen = secondaryScreen
+
+summon.summon('Browser')
+
+assertEqual(#openCalls, 1, 'summon should open unopened apps')
+assertEqual(openCalls[1], 'com.brave.Browser', 'summon should open the configured app identifier')
+assertEqual(#placementCalls, 1, 'summon should place unopened apps immediately after opening them')
+assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should place unopened apps on the invocation screen')
 
 print('summon_spec ok')

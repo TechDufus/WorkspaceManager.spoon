@@ -42,13 +42,50 @@ return function(workspaceManager)
     return bundleId == identifier or name == identifier or bundleId == fallbackName or name == fallbackName
   end
 
+  local function screenIdentity(screen)
+    if not screen then
+      return nil
+    end
+
+    if type(screen.getUUID) == 'function' then
+      local uuid = screen:getUUID()
+      if uuid then
+        return uuid
+      end
+    end
+
+    if type(screen.id) == 'function' then
+      local id = screen:id()
+      if id ~= nil then
+        return tostring(id)
+      end
+    end
+
+    if type(screen.name) == 'function' then
+      return screen:name()
+    end
+
+    return nil
+  end
+
+  local function screensMatch(left, right)
+    if left == right then
+      return true
+    end
+
+    local leftIdentity = screenIdentity(left)
+    local rightIdentity = screenIdentity(right)
+
+    return leftIdentity ~= nil and leftIdentity == rightIdentity
+  end
+
   local function preferredWindow(app, targetScreen)
     if not app then
       return nil
     end
 
     for _, window in ipairs(app:allWindows()) do
-      if window:isStandard() and window:screen() == targetScreen then
+      if window:isStandard() and screensMatch(window:screen(), targetScreen) then
         return window
       end
     end
@@ -65,6 +102,28 @@ return function(workspaceManager)
     end
 
     return nil
+  end
+
+  local function summonTargetScreen()
+    local mouse = hs.mouse
+    if mouse and type(mouse.getCurrentScreen) == 'function' then
+      local mouseScreen = mouse.getCurrentScreen()
+      if mouseScreen then
+        return mouseScreen
+      end
+    end
+
+    local focusedWindow = hs.window.focusedWindow()
+    return (focusedWindow and focusedWindow:screen()) or hs.screen.mainScreen() or hs.screen.primaryScreen()
+  end
+
+  local function placementScreenForWindow(targetScreen, window)
+    if not window or not window.isStandard or not window:isStandard() then
+      return targetScreen
+    end
+
+    local windowScreen = window:screen()
+    return windowScreen or targetScreen
   end
 
   local function placeApp(appName, targetScreen, preferred, remainingAttempts)
@@ -147,8 +206,7 @@ return function(workspaceManager)
     local id = target.id or appName
     local frontmostApp = hs.application.frontmostApplication()
     local app = resolveApp(id) or resolveApp(appName)
-    local focusedWindow = hs.window.focusedWindow()
-    local targetScreen = (focusedWindow and focusedWindow:screen()) or hs.screen.mainScreen() or hs.screen.primaryScreen()
+    local targetScreen = summonTargetScreen()
 
     if appMatches(frontmostApp, id, appName) and previousApp and not appMatches(frontmostApp, previousApp, previousApp) then
       local previous = resolveApp(previousApp)
@@ -159,11 +217,11 @@ return function(workspaceManager)
       end
     elseif app and next(app:allWindows()) then
       local window = preferredWindow(app, targetScreen)
-      app:activate()
-      if window then
-        window:focus()
+      local placementScreen = placementScreenForWindow(targetScreen, window)
+      if not window then
+        app:activate()
       end
-      placeApp(appName, targetScreen, window, placementAttempts)
+      placeApp(appName, placementScreen, window, placementAttempts)
     else
       local opened = hs.application.open(id)
       if not opened and appName ~= id then

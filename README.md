@@ -224,6 +224,11 @@ Resolution order:
 
 Summon-specific config is nested under `summon`.
 
+Summoned apps target the screen under the mouse pointer when available, then fall back to the
+focused window's screen, then `hs.screen.mainScreen()`. If the app already has a standard window,
+WorkspaceManager keeps that window on its current screen and reapplies the layout there instead of
+pulling it across monitors.
+
 Example:
 
 ```lua
