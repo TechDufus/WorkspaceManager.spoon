@@ -8,6 +8,7 @@ return function(workspaceManager)
   local previousApp = nil
   local currentApp = nil
   local preferredWindowIdsByApp = {}
+  local appFocusWatchersByIdentity = {}
   local focusWatcher = nil
   local placementDelaySeconds = defaultPlacementDelaySeconds
   local placementAttempts = defaultPlacementAttempts
@@ -16,12 +17,32 @@ return function(workspaceManager)
     error('WorkspaceManager invalid summon config: ' .. message, 3)
   end
 
-  local function appIdentity(app)
-    if not app then
+  local function applicationBundleId(app)
+    if not app or type(app.bundleID) ~= 'function' then
       return nil
     end
 
-    return app:bundleID() or app:name()
+    local ok, bundleId = pcall(function()
+      return app:bundleID()
+    end)
+
+    return ok and bundleId or nil
+  end
+
+  local function applicationName(app)
+    if not app or type(app.name) ~= 'function' then
+      return nil
+    end
+
+    local ok, name = pcall(function()
+      return app:name()
+    end)
+
+    return ok and name or nil
+  end
+
+  local function appIdentity(app)
+    return applicationBundleId(app) or applicationName(app)
   end
 
   local function resolveApp(identifier)
@@ -37,10 +58,21 @@ return function(workspaceManager)
       return false
     end
 
-    local bundleId = app:bundleID()
-    local name = app:name()
+    local bundleId = applicationBundleId(app)
+    local name = applicationName(app)
 
     return bundleId == identifier or name == identifier or bundleId == fallbackName or name == fallbackName
+  end
+
+  local function appHasIdentity(app, identity)
+    if not app or not identity then
+      return false
+    end
+
+    local bundleId = applicationBundleId(app)
+    local name = applicationName(app)
+
+    return bundleId == identity or name == identity
   end
 
   local function windowIdKey(windowOrId)
@@ -116,15 +148,30 @@ return function(workspaceManager)
       preferredWindowIdsByApp[identity] = nil
     end
 
+    local focusedWindow = app:focusedWindow()
+    if focusedWindow and focusedWindow:isStandard() then
+      return focusedWindow
+    end
+
+    if hs.window and type(hs.window.orderedWindows) == 'function' then
+      for _, window in ipairs(hs.window.orderedWindows()) do
+        if window and type(window.isStandard) == 'function' and window:isStandard() then
+          local candidateApp = type(window.application) == 'function' and window:application() or nil
+          if appHasIdentity(candidateApp, identity) then
+            local orderedWindowId = windowIdKey(window)
+            if orderedWindowId then
+              preferredWindowIdsByApp[identity] = orderedWindowId
+            end
+            return window
+          end
+        end
+      end
+    end
+
     for _, window in ipairs(app:allWindows()) do
       if window:isStandard() and screensMatch(window:screen(), targetScreen) then
         return window
       end
-    end
-
-    local focusedWindow = app:focusedWindow()
-    if focusedWindow and focusedWindow:isStandard() then
-      return focusedWindow
     end
 
     for _, window in ipairs(app:allWindows()) do
@@ -197,6 +244,92 @@ return function(workspaceManager)
     currentApp = identity
   end
 
+  local function stopAppFocusWatcher(identity)
+    local watcherEntry = appFocusWatchersByIdentity[identity]
+    if not watcherEntry then
+      return
+    end
+
+    if watcherEntry.watcher and type(watcherEntry.watcher.stop) == 'function' then
+      pcall(function()
+        watcherEntry.watcher:stop()
+      end)
+    end
+
+    appFocusWatchersByIdentity[identity] = nil
+  end
+
+  local function stopAppFocusWatchers()
+    for identity in pairs(appFocusWatchersByIdentity) do
+      stopAppFocusWatcher(identity)
+    end
+  end
+
+  local function ensureAppFocusWatcher(app)
+    if (type(app) ~= 'table' and type(app) ~= 'userdata')
+      or not hs.uielement
+      or not hs.uielement.watcher
+      or type(app.newWatcher) ~= 'function'
+      or hs.uielement.watcher.focusedWindowChanged == nil then
+      return
+    end
+
+    local identity = appIdentity(app)
+    if not identity then
+      return
+    end
+
+    local pid = nil
+    if type(app.pid) == 'function' then
+      pid = app:pid()
+    end
+
+    local existingWatcher = appFocusWatchersByIdentity[identity]
+    if existingWatcher and existingWatcher.pid == pid then
+      return
+    end
+
+    stopAppFocusWatcher(identity)
+
+    local ok, watcher = pcall(function()
+      return app:newWatcher(function(element, event)
+        if event == hs.uielement.watcher.focusedWindowChanged then
+          trackFocusedWindow(element)
+        end
+      end)
+    end)
+
+    if not ok or not watcher then
+      return
+    end
+
+    local started = pcall(function()
+      watcher:start({ hs.uielement.watcher.focusedWindowChanged })
+    end)
+
+    if not started then
+      pcall(function()
+        watcher:stop()
+      end)
+      return
+    end
+
+    appFocusWatchersByIdentity[identity] = {
+      pid = pid,
+      watcher = watcher,
+    }
+  end
+
+  local function ensureConfiguredAppFocusWatchers()
+    for appName, appConfig in pairs(apps) do
+      local identifier = (type(appConfig) == 'table' and appConfig.id) or appName
+      local app = resolveApp(identifier) or resolveApp(appName)
+      if app then
+        ensureAppFocusWatcher(app)
+      end
+    end
+  end
+
   function M.start(config)
     config = config or {}
 
@@ -233,12 +366,14 @@ return function(workspaceManager)
     previousApp = nil
     currentApp = nil
     preferredWindowIdsByApp = {}
+    stopAppFocusWatchers()
 
     if not focusWatcher then
       focusWatcher = hs.window.filter.new():subscribe(hs.window.filter.windowFocused, trackFocusedWindow)
     end
 
     trackFocusedWindow(hs.window.focusedWindow())
+    ensureConfiguredAppFocusWatchers()
 
     return M
   end
@@ -252,6 +387,7 @@ return function(workspaceManager)
     previousApp = nil
     currentApp = nil
     preferredWindowIdsByApp = {}
+    stopAppFocusWatchers()
 
     return M
   end
@@ -262,6 +398,10 @@ return function(workspaceManager)
     local frontmostApp = hs.application.frontmostApplication()
     local app = resolveApp(id) or resolveApp(appName)
     local targetScreen = summonTargetScreen()
+
+    if app then
+      ensureAppFocusWatcher(app)
+    end
 
     if appMatches(frontmostApp, id, appName) and previousApp and not appMatches(frontmostApp, previousApp, previousApp) then
       local previous = resolveApp(previousApp)
@@ -279,8 +419,10 @@ return function(workspaceManager)
       placeApp(appName, placementScreen, window, placementAttempts)
     else
       local opened = hs.application.open(id)
+      ensureAppFocusWatcher(opened or resolveApp(id) or resolveApp(appName))
       if not opened and appName ~= id then
         hs.application.open(appName)
+        ensureAppFocusWatcher(resolveApp(appName))
       end
       placeApp(appName, targetScreen, nil, placementAttempts)
     end

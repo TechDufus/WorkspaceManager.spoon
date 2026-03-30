@@ -34,7 +34,9 @@ local currentWindowScreen = targetScreen
 local alternateWindowScreen = targetScreen
 local currentFocusedScreen = targetScreen
 local currentMouseScreen = nil
+local currentOrderedWindows = {}
 local focusCallback = nil
+local appFocusWatcherCallback = nil
 local app
 
 local appWindow = {
@@ -91,6 +93,15 @@ app = {
   focusedWindow = function()
     return currentAppFocusedWindow
   end,
+  newWatcher = function(_, callback)
+    appFocusWatcherCallback = callback
+    return {
+      start = function(self)
+        return self
+      end,
+      stop = function() end,
+    }
+  end,
   activate = function(self)
     self.activated = true
   end,
@@ -141,6 +152,9 @@ hs = {
     focusedWindow = function()
       return focusedWindow
     end,
+    orderedWindows = function()
+      return currentOrderedWindows
+    end,
     filter = {
       windowFocused = 'windowFocused',
       new = function()
@@ -152,6 +166,11 @@ hs = {
           unsubscribeAll = function() end,
         }
       end,
+    },
+  },
+  uielement = {
+    watcher = {
+      focusedWindowChanged = 'AXFocusedWindowChanged',
     },
   },
   mouse = {
@@ -210,9 +229,29 @@ local function resetState()
   alternateWindowScreen = targetScreen
   currentAppWindows = { appWindow }
   currentAppFocusedWindow = appWindow
+  currentOrderedWindows = { appWindow }
 end
 
 local summon = dofile('./summon.lua')(workspaceManager)
+local summonConfig = {
+  apps = {
+    Terminal = {
+      id = 'com.mitchellh.ghostty',
+    },
+    Browser = {
+      id = 'com.brave.Browser',
+    },
+  },
+  summon = {
+    placementDelaySeconds = 0.05,
+    placementAttempts = 3,
+  },
+}
+
+local function restartSummon()
+  summon.stop()
+  summon.start(summonConfig)
+end
 
 do
   local invalidSummon = dofile('./summon.lua')(workspaceManager)
@@ -233,22 +272,8 @@ do
   assertContains(err, 'placementAttempts', 'summon.start() should explain the invalid retry count')
 end
 
-summon.start({
-  apps = {
-    Terminal = {
-      id = 'com.mitchellh.ghostty',
-    },
-    Browser = {
-      id = 'com.brave.Browser',
-    },
-  },
-  summon = {
-    placementDelaySeconds = 0.05,
-    placementAttempts = 3,
-  },
-})
-
 resetState()
+restartSummon()
 summon.summon('Terminal')
 
 assertEqual(app.activated, nil, 'summon should not pre-activate an existing standard window before placement')
@@ -270,6 +295,7 @@ assertEqual(#timerQueue, 2, 'successful placement should stop scheduling additio
 assertEqual(#openCalls, 0, 'existing apps should not be reopened')
 
 resetState()
+restartSummon()
 currentMouseScreen = targetScreen
 currentFocusedScreen = secondaryScreen
 currentWindowScreen = secondaryScreen
@@ -282,28 +308,48 @@ assertEqual(#placementCalls, 1, 'mouse-targeted summon should still attempt plac
 assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should keep an existing app on its current screen even when the mouse is elsewhere')
 
 resetState()
+restartSummon()
 currentMouseScreen = aliasedTargetScreen
 currentFocusedScreen = secondaryScreen
 currentWindowScreen = secondaryScreen
 alternateWindowScreen = targetScreen
 currentAppWindows = { appWindow, alternateWindow }
 currentAppFocusedWindow = appWindow
+currentOrderedWindows = {}
 
 summon.summon('Terminal')
 
 assertEqual(#placementCalls, 1, 'summon should attempt placement when multiple windows exist')
-assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should prefer a window already on the target screen')
+assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should prefer the app-focused window before weaker fallbacks')
+assertEqual(placementCalls[1].preferred, appWindow, 'summon should use the app-focused window when it is available')
+
+resetState()
+restartSummon()
+currentMouseScreen = aliasedTargetScreen
+currentFocusedScreen = secondaryScreen
+currentWindowScreen = secondaryScreen
+alternateWindowScreen = targetScreen
+currentAppWindows = { appWindow, alternateWindow }
+currentAppFocusedWindow = nil
+currentOrderedWindows = {}
+
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'summon should attempt placement when no preferred or focused window is known')
+assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should prefer a window already on the target screen when stronger preferences are unavailable')
 assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should pick the matching on-screen window even when screen objects differ')
 
 resetState()
+restartSummon()
 currentMouseScreen = targetScreen
 currentWindowScreen = targetScreen
 alternateWindowScreen = secondaryScreen
 currentAppWindows = { appWindow, alternateWindow }
 currentAppFocusedWindow = appWindow
+currentOrderedWindows = { appWindow, alternateWindow }
 
-focusCallback(appWindow)
-focusCallback(alternateWindow)
+appFocusWatcherCallback(appWindow, hs.uielement.watcher.focusedWindowChanged)
+appFocusWatcherCallback(alternateWindow, hs.uielement.watcher.focusedWindowChanged)
 
 summon.summon('Terminal')
 
@@ -312,12 +358,29 @@ assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should 
 assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should remember the last focused standard window for an app')
 
 resetState()
+restartSummon()
 currentMouseScreen = targetScreen
 currentWindowScreen = targetScreen
 alternateWindowScreen = secondaryScreen
 currentAppWindows = { appWindow, alternateWindow }
+currentAppFocusedWindow = nil
+currentOrderedWindows = { alternateWindow, appWindow }
 
-focusCallback(alternateWindow)
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'summon should attempt placement when inferring the preferred window from z-order')
+assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should use the most recent visible window for the app when no watcher update was recorded')
+assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should fall back to global window ordering for app window recall')
+
+resetState()
+restartSummon()
+currentMouseScreen = targetScreen
+currentWindowScreen = targetScreen
+alternateWindowScreen = secondaryScreen
+currentAppWindows = { appWindow, alternateWindow }
+currentOrderedWindows = { appWindow }
+
+appFocusWatcherCallback(alternateWindow, hs.uielement.watcher.focusedWindowChanged)
 currentAppWindows = { appWindow }
 currentAppFocusedWindow = appWindow
 
@@ -328,6 +391,7 @@ assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should fall back
 assertEqual(placementCalls[1].preferred, appWindow, 'summon should clear stale remembered windows and fall back cleanly')
 
 resetState()
+restartSummon()
 currentMouseScreen = targetScreen
 currentFocusedScreen = secondaryScreen
 
