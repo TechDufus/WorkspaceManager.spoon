@@ -100,3 +100,17 @@ jobs:
           fi
 
           git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          archive="dist/WorkspaceManager.spoon.zip"
+          checksum="dist/WorkspaceManager.spoon.zip.sha256"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$archive" "$checksum" --clobber
+          else
+            gh release create "$tag" "$archive" "$checksum" --title "$tag" --generate-notes
+          fi

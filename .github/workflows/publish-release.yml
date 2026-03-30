@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish, for example v0.1.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -28,9 +34,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y lua5.4 zip
 
+      - name: Resolve release tag
+        id: release
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [ -z "$tag" ]; then
+            echo "release tag is required" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+
+      - name: Check out release tag
+        run: |
+          git fetch --force origin "refs/tags/${{ steps.release.outputs.tag }}:refs/tags/${{ steps.release.outputs.tag }}"
+          git checkout --force "${{ steps.release.outputs.tag }}"
+
       - name: Validate tag matches spoon version
         run: |
-          release_version="${GITHUB_REF_NAME#v}"
+          release_version="${{ steps.release.outputs.version }}"
           spoon_version="$(./scripts/version.sh current)"
 
           if [ "$release_version" != "$spoon_version" ]; then
@@ -47,13 +75,13 @@ jobs:
           lua5.4 tests/init_spec.lua
 
       - name: Build spoon archive
-        run: ./scripts/package_spoon.sh "${GITHUB_REF_NAME#v}" dist
+        run: ./scripts/package_spoon.sh "${{ steps.release.outputs.version }}" dist
 
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${GITHUB_REF_NAME}"
+          tag="${{ steps.release.outputs.tag }}"
           archive="dist/WorkspaceManager.spoon.zip"
           checksum="dist/WorkspaceManager.spoon.zip.sha256"
 

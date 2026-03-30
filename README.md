@@ -341,10 +341,10 @@ GitHub Actions runs the same parser and spec checks on pushes and pull requests.
 
 This repo ships releases through GitHub Actions:
 
-- `Release` is a manual workflow that either tags the current Spoon version or bumps semver first.
-- `Publish Release` runs on `v*` tags, builds `WorkspaceManager.spoon.zip`, generates a SHA-256
-  checksum, generates Hammerspoon-style `docs.json` plus Markdown API docs, and attaches the
-  release assets to the GitHub Release.
+- `Release` is the primary manual workflow. It validates the repo, builds the Spoon zip and docs,
+  creates or bumps the semver tag, and publishes the GitHub release assets directly.
+- `Publish Release` is the recovery path for existing tags. It can run on external `v*` tag pushes
+  or be dispatched manually for a specific tag, then rebuild and upload the release assets.
 
 Release strategy options:
 
