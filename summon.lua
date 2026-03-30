@@ -1,5 +1,7 @@
 local defaultPlacementDelaySeconds = 0.2
 local defaultPlacementAttempts = 10
+local defaultFocusRetryDelaySeconds = 0.04
+local defaultFocusAttempts = 6
 
 return function(workspaceManager)
   local M = {}
@@ -10,8 +12,13 @@ return function(workspaceManager)
   local preferredWindowIdsByApp = {}
   local appFocusWatchersByIdentity = {}
   local focusWatcher = nil
+  local activePlacementRequestId = 0
+  local pendingPlacementTimer = nil
+  local pendingFocusTimer = nil
   local placementDelaySeconds = defaultPlacementDelaySeconds
   local placementAttempts = defaultPlacementAttempts
+  local focusRetryDelaySeconds = defaultFocusRetryDelaySeconds
+  local focusAttempts = defaultFocusAttempts
 
   local function configError(message)
     error('WorkspaceManager invalid summon config: ' .. message, 3)
@@ -196,22 +203,102 @@ return function(workspaceManager)
     return (focusedWindow and focusedWindow:screen()) or hs.screen.mainScreen() or hs.screen.primaryScreen()
   end
 
-  local function placementScreenForWindow(targetScreen, window)
-    if not window or not window.isStandard or not window:isStandard() then
-      return targetScreen
+  local function cancelPlacementRetries()
+    activePlacementRequestId = activePlacementRequestId + 1
+
+    if pendingPlacementTimer and type(pendingPlacementTimer.stop) == 'function' then
+      pcall(function()
+        pendingPlacementTimer:stop()
+      end)
     end
 
-    local windowScreen = window:screen()
-    return windowScreen or targetScreen
+    pendingPlacementTimer = nil
+
+    if pendingFocusTimer and type(pendingFocusTimer.stop) == 'function' then
+      pcall(function()
+        pendingFocusTimer:stop()
+      end)
+    end
+
+    pendingFocusTimer = nil
+
+    return activePlacementRequestId
   end
 
-  local function placeApp(appName, targetScreen, preferred, remainingAttempts)
-    if workspaceManager.placeApp(appName, targetScreen, preferred) or remainingAttempts <= 0 then
+  local function focusedWindowMatches(window)
+    local focusedWindow = hs.window and type(hs.window.focusedWindow) == 'function' and hs.window.focusedWindow() or nil
+    return focusedWindow and windowIdKey(focusedWindow) == windowIdKey(window)
+  end
+
+  local function frontmostAppMatches(app)
+    local frontmostApp = hs.application
+      and type(hs.application.frontmostApplication) == 'function'
+      and hs.application.frontmostApplication()
+      or nil
+
+    return frontmostApp and appHasIdentity(frontmostApp, appIdentity(app))
+  end
+
+  local function focusSettled(app, window)
+    return focusedWindowMatches(window) and frontmostAppMatches(app)
+  end
+
+  local function focusPreferredWindow(app, window, requestId, remainingAttempts)
+    if requestId ~= activePlacementRequestId then
+      return false
+    end
+
+    if not window or not window.isStandard or not window:isStandard() then
+      return false
+    end
+
+    if app
+      and type(app.isHidden) == 'function'
+      and app:isHidden()
+      and type(app.unhide) == 'function' then
+      app:unhide()
+    end
+
+    if app and type(app.activate) == 'function' then
+      app:activate()
+    end
+
+    if type(window.raise) == 'function' then
+      window:raise()
+    end
+
+    window:focus()
+
+    if focusSettled(app, window) or remainingAttempts <= 0 then
+      pendingFocusTimer = nil
+      return true
+    end
+
+    pendingFocusTimer = hs.timer.doAfter(focusRetryDelaySeconds, function()
+      pendingFocusTimer = nil
+      focusPreferredWindow(app, window, requestId, remainingAttempts - 1)
+    end)
+
+    return true
+  end
+
+  local function placeApp(appName, targetScreen, preferred, remainingAttempts, requestId)
+    if requestId ~= activePlacementRequestId then
       return
     end
 
-    hs.timer.doAfter(placementDelaySeconds, function()
-      placeApp(appName, targetScreen, preferred, remainingAttempts - 1)
+    if workspaceManager.placeApp(appName, targetScreen, preferred) or remainingAttempts <= 0 then
+      pendingPlacementTimer = nil
+      return
+    end
+
+    pendingPlacementTimer = hs.timer.doAfter(placementDelaySeconds, function()
+      if requestId ~= activePlacementRequestId then
+        return
+      end
+
+      pendingPlacementTimer = nil
+      placeApp(appName, targetScreen, preferred, remainingAttempts - 1, requestId)
     end)
   end
 
@@ -362,10 +449,14 @@ return function(workspaceManager)
       placementAttempts = defaultPlacementAttempts
     end
 
+    focusRetryDelaySeconds = defaultFocusRetryDelaySeconds
+    focusAttempts = defaultFocusAttempts
+
     apps = config.apps or {}
     previousApp = nil
     currentApp = nil
     preferredWindowIdsByApp = {}
+    cancelPlacementRetries()
     stopAppFocusWatchers()
 
     if not focusWatcher then
@@ -387,6 +478,7 @@ return function(workspaceManager)
     previousApp = nil
     currentApp = nil
     preferredWindowIdsByApp = {}
+    cancelPlacementRetries()
     stopAppFocusWatchers()
 
     return M
@@ -398,6 +490,7 @@ return function(workspaceManager)
     local frontmostApp = hs.application.frontmostApplication()
     local app = resolveApp(id) or resolveApp(appName)
     local targetScreen = summonTargetScreen()
+    local requestId = cancelPlacementRetries()
 
     if app then
       ensureAppFocusWatcher(app)
@@ -410,13 +503,12 @@ return function(workspaceManager)
       else
         hs.application.open(previousApp)
       end
-    elseif app and next(app:allWindows()) then
+    elseif app then
       local window = preferredWindow(app, targetScreen)
-      local placementScreen = placementScreenForWindow(targetScreen, window)
-      if not window then
+      if not focusPreferredWindow(app, window, requestId, focusAttempts) then
         app:activate()
+        placeApp(appName, targetScreen, nil, placementAttempts, requestId)
       end
-      placeApp(appName, placementScreen, window, placementAttempts)
     else
       local opened = hs.application.open(id)
       ensureAppFocusWatcher(opened or resolveApp(id) or resolveApp(appName))
@@ -424,7 +516,7 @@ return function(workspaceManager)
         hs.application.open(appName)
         ensureAppFocusWatcher(resolveApp(appName))
       end
-      placeApp(appName, targetScreen, nil, placementAttempts)
+      placeApp(appName, targetScreen, nil, placementAttempts, requestId)
     end
 
     return M

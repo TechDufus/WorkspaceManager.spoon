@@ -35,9 +35,21 @@ local alternateWindowScreen = targetScreen
 local currentFocusedScreen = targetScreen
 local currentMouseScreen = nil
 local currentOrderedWindows = {}
+local currentFrontmostApp = nil
+local currentHsFocusedWindow = nil
 local focusCallback = nil
 local appFocusWatcherCallback = nil
 local app
+local delayedFocusRemaining = 0
+
+local finderApp = {
+  bundleID = function()
+    return 'com.apple.finder'
+  end,
+  name = function()
+    return 'Finder'
+  end,
+}
 
 local appWindow = {
   id = function()
@@ -53,7 +65,18 @@ local appWindow = {
     return currentWindowScreen
   end,
   focus = function(self)
+    if delayedFocusRemaining > 0 then
+      delayedFocusRemaining = delayedFocusRemaining - 1
+      return self
+    end
+
     self.focused = true
+    currentFrontmostApp = app
+    currentHsFocusedWindow = self
+    return self
+  end,
+  raise = function(self)
+    self.raised = true
     return self
   end,
 }
@@ -72,7 +95,18 @@ local alternateWindow = {
     return alternateWindowScreen
   end,
   focus = function(self)
+    if delayedFocusRemaining > 0 then
+      delayedFocusRemaining = delayedFocusRemaining - 1
+      return self
+    end
+
     self.focused = true
+    currentFrontmostApp = app
+    currentHsFocusedWindow = self
+    return self
+  end,
+  raise = function(self)
+    self.raised = true
     return self
   end,
 }
@@ -104,10 +138,21 @@ app = {
   end,
   activate = function(self)
     self.activated = true
+    currentFrontmostApp = self
+    return true
   end,
 }
 
 local focusedWindow = {
+  id = function()
+    return 999
+  end,
+  application = function()
+    return finderApp
+  end,
+  isStandard = function()
+    return false
+  end,
   screen = function()
     return currentFocusedScreen
   end,
@@ -138,19 +183,12 @@ hs = {
       return app
     end,
     frontmostApplication = function()
-      return {
-        bundleID = function()
-          return 'com.apple.finder'
-        end,
-        name = function()
-          return 'Finder'
-        end,
-      }
+      return currentFrontmostApp
     end,
   },
   window = {
     focusedWindow = function()
-      return focusedWindow
+      return currentHsFocusedWindow
     end,
     orderedWindows = function()
       return currentOrderedWindows
@@ -222,7 +260,9 @@ local function resetState()
   attempts = 0
   app.activated = nil
   appWindow.focused = nil
+  appWindow.raised = nil
   alternateWindow.focused = nil
+  alternateWindow.raised = nil
   currentMouseScreen = nil
   currentFocusedScreen = targetScreen
   currentWindowScreen = targetScreen
@@ -230,6 +270,9 @@ local function resetState()
   currentAppWindows = { appWindow }
   currentAppFocusedWindow = appWindow
   currentOrderedWindows = { appWindow }
+  currentFrontmostApp = finderApp
+  currentHsFocusedWindow = focusedWindow
+  delayedFocusRemaining = 0
 end
 
 local summon = dofile('./summon.lua')(workspaceManager)
@@ -276,22 +319,10 @@ resetState()
 restartSummon()
 summon.summon('Terminal')
 
-assertEqual(app.activated, nil, 'summon should not pre-activate an existing standard window before placement')
-assertEqual(appWindow.focused, nil, 'summon should not pre-focus the preferred window before placement retries')
-assertEqual(#placementCalls, 1, 'summon should attempt placement immediately')
-assertEqual(#timerQueue, 1, 'failed placement should schedule a retry')
-assertEqual(timerQueue[1].delay, 0.05, 'retry should use configured placement delay')
-assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should keep an existing app on its current screen')
-
-timerQueue[1].callback()
-
-assertEqual(#placementCalls, 2, 'first retry should attempt placement again')
-assertEqual(#timerQueue, 2, 'first retry should schedule a second retry when still failing')
-
-timerQueue[2].callback()
-
-assertEqual(#placementCalls, 3, 'second retry should attempt placement again')
-assertEqual(#timerQueue, 2, 'successful placement should stop scheduling additional retries')
+assertEqual(app.activated, true, 'summon should activate an existing app before focusing its window')
+assertEqual(appWindow.focused, true, 'summon should focus an existing standard window immediately')
+assertEqual(#placementCalls, 0, 'summon should not run placement for existing standard windows')
+assertEqual(#timerQueue, 0, 'summon should not schedule retries for existing standard windows')
 assertEqual(#openCalls, 0, 'existing apps should not be reopened')
 
 resetState()
@@ -302,10 +333,9 @@ currentWindowScreen = secondaryScreen
 
 summon.summon('Terminal')
 
-assertEqual(app.activated, nil, 'summon should not pre-activate an existing standard window before placement')
-assertEqual(appWindow.focused, nil, 'summon should not focus an off-screen window before placement')
-assertEqual(#placementCalls, 1, 'mouse-targeted summon should still attempt placement immediately')
-assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should keep an existing app on its current screen even when the mouse is elsewhere')
+assertEqual(app.activated, true, 'summon should activate an existing app before focusing its window')
+assertEqual(appWindow.focused, true, 'summon should focus an existing off-screen window without moving it')
+assertEqual(#placementCalls, 0, 'mouse-targeted summon should not re-place an existing standard window')
 
 resetState()
 restartSummon()
@@ -319,9 +349,9 @@ currentOrderedWindows = {}
 
 summon.summon('Terminal')
 
-assertEqual(#placementCalls, 1, 'summon should attempt placement when multiple windows exist')
-assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should prefer the app-focused window before weaker fallbacks')
-assertEqual(placementCalls[1].preferred, appWindow, 'summon should use the app-focused window when it is available')
+assertEqual(appWindow.focused, true, 'summon should focus the app-focused window when it is available')
+assertEqual(alternateWindow.focused, nil, 'summon should not focus weaker fallback windows when a stronger preference exists')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when choosing between multiple windows')
 
 resetState()
 restartSummon()
@@ -335,9 +365,9 @@ currentOrderedWindows = {}
 
 summon.summon('Terminal')
 
-assertEqual(#placementCalls, 1, 'summon should attempt placement when no preferred or focused window is known')
-assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should prefer a window already on the target screen when stronger preferences are unavailable')
-assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should pick the matching on-screen window even when screen objects differ')
+assertEqual(alternateWindow.focused, true, 'summon should pick the matching on-screen window even when screen objects differ')
+assertEqual(appWindow.focused, nil, 'summon should not focus weaker window fallbacks when a same-screen window exists')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when using screen fallback')
 
 resetState()
 restartSummon()
@@ -353,9 +383,9 @@ appFocusWatcherCallback(alternateWindow, hs.uielement.watcher.focusedWindowChang
 
 summon.summon('Terminal')
 
-assertEqual(#placementCalls, 1, 'summon should attempt placement after same-app window focus changes')
-assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should restore the most recently focused window even when another window is on the invocation screen')
-assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should remember the last focused standard window for an app')
+assertEqual(alternateWindow.focused, true, 'summon should remember the last focused standard window for an app')
+assertEqual(appWindow.focused, nil, 'summon should not revert to another window when a remembered window exists')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when restoring remembered windows')
 
 resetState()
 restartSummon()
@@ -368,9 +398,9 @@ currentOrderedWindows = { alternateWindow, appWindow }
 
 summon.summon('Terminal')
 
-assertEqual(#placementCalls, 1, 'summon should attempt placement when inferring the preferred window from z-order')
-assertEqual(placementCalls[1].screen, 'Built-in Retina Display', 'summon should use the most recent visible window for the app when no watcher update was recorded')
-assertEqual(placementCalls[1].preferred, alternateWindow, 'summon should fall back to global window ordering for app window recall')
+assertEqual(alternateWindow.focused, true, 'summon should fall back to global window ordering for app window recall')
+assertEqual(appWindow.focused, nil, 'summon should not focus a less recent window when z-order provides a better choice')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when inferring from z-order')
 
 resetState()
 restartSummon()
@@ -386,9 +416,24 @@ currentAppFocusedWindow = appWindow
 
 summon.summon('Terminal')
 
-assertEqual(#placementCalls, 1, 'summon should still attempt placement when the remembered window is gone')
-assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should fall back to an on-screen window when the remembered one no longer exists')
-assertEqual(placementCalls[1].preferred, appWindow, 'summon should clear stale remembered windows and fall back cleanly')
+assertEqual(appWindow.focused, true, 'summon should clear stale remembered windows and fall back cleanly')
+assertEqual(alternateWindow.focused, nil, 'summon should not focus a missing remembered window')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when clearing stale remembered windows')
+
+resetState()
+restartSummon()
+delayedFocusRemaining = 1
+
+summon.summon('Terminal')
+
+assertEqual(appWindow.focused, nil, 'summon should retry focus when the initial focus call does not stick')
+assertEqual(#timerQueue, 1, 'summon should schedule a focus retry when the target app is not frontmost yet')
+
+timerQueue[1].callback()
+
+assertEqual(appWindow.focused, true, 'summon should eventually focus the target window after a retry')
+assertEqual(appWindow.raised, true, 'summon should raise the target window before retrying focus')
+assertEqual(#placementCalls, 0, 'summon should not place existing windows when focus only needs a retry')
 
 resetState()
 restartSummon()
@@ -401,5 +446,19 @@ assertEqual(#openCalls, 1, 'summon should open unopened apps')
 assertEqual(openCalls[1], 'com.brave.Browser', 'summon should open the configured app identifier')
 assertEqual(#placementCalls, 1, 'summon should place unopened apps immediately after opening them')
 assertEqual(placementCalls[1].screen, 'Studio Display', 'summon should place unopened apps on the invocation screen')
+
+resetState()
+restartSummon()
+
+summon.summon('Browser')
+summon.summon('Terminal')
+
+assertEqual(#placementCalls, 1, 'opening an unopened app should still place it immediately')
+assertEqual(#timerQueue, 1, 'opening an unopened app should still schedule retries when placement fails')
+assertEqual(appWindow.focused, true, 'a newer summon should focus an existing window immediately')
+
+timerQueue[1].callback()
+
+assertEqual(#placementCalls, 1, 'stale retries should not run after a newer summon supersedes them')
 
 print('summon_spec ok')

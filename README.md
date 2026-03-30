@@ -229,8 +229,9 @@ focused window's screen, then `hs.screen.mainScreen()`. If the app already has a
 WorkspaceManager prefers the most recently used standard window for that app when re-summoning.
 It first uses tracked app-level focused-window changes when available, then the app's own focused
 window, then visible window z-order, and only then falls back to windows on the invocation screen.
-Existing apps stay on the selected window's current screen and the layout is reapplied there
-instead of pulling a different window across monitors.
+Existing apps stay on the selected window's current screen and are focused directly instead of
+being re-placed across monitors. If macOS drops the first focus request, WorkspaceManager raises
+the selected window and retries focus before falling back to placement.
 
 Example:
 
@@ -378,7 +379,8 @@ Local release helpers:
 - focused-window move behavior that pre-moves onto the destination screen before snapping
 - persisted per-app override reload behavior
 - persisted per-window override reload behavior
-- summon retry timing and placement retry cut-off
+- summon remembered-window recall and same-screen fallback order
+- summon focus retry timing and stale retry cancellation
 - `init.lua` watcher lifecycle and wrapper forwarding
 
 ### Real Hammerspoon testing
