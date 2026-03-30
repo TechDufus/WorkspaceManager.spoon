@@ -14,10 +14,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install Lua 5.4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Lua 5.4 and zip
         run: |
           sudo apt-get update
-          sudo apt-get install -y lua5.4
+          sudo apt-get install -y lua5.4 zip
 
       - name: Parse Lua sources
         run: luac5.4 -p init.lua workspace_manager.lua screens.lua summon.lua tests/init_spec.lua tests/runtime_spec.lua tests/summon_spec.lua
@@ -30,3 +35,6 @@ jobs:
 
       - name: Run init spec
         run: lua5.4 tests/init_spec.lua
+
+      - name: Build spoon archive and generated docs
+        run: ./scripts/package_spoon.sh "$(./scripts/version.sh current)" dist

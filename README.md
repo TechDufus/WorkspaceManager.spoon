@@ -46,17 +46,31 @@ that foundation instead of trying to reimplement the layout engine itself.
 
 - Plain string cells and per-screen layout selection work with a stock
   [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) release.
-- Explicit `cell.screen` routing is currently verified against
-  [`TechDufus/GridLayout.spoon`](https://github.com/TechDufus/GridLayout.spoon/tree/feat/screen-aware-cells)
-  branch `feat/screen-aware-cells` at commit `f339cc8`.
-- If you depend on `cell.screen`, pin that branch or commit instead of assuming upstream parity.
+- Explicit `cell.screen` routing is now supported upstream in
+  [`jesseleite/GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) via
+  [PR #7](https://github.com/jesseleite/GridLayout.spoon/pull/7), which merged on March 28, 2026.
+- As of March 29, 2026, the latest upstream release still predates that merge. If you depend on
+  `cell.screen`, pin upstream `master` at `4d32c93` or later until a tagged release includes
+  PR #7.
 
 ## Installation
 
-Install both spoons into `~/.hammerspoon/Spoons/`:
+For end users, install both spoons from their GitHub Releases:
 
-1. [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon)
-2. `WorkspaceManager.spoon`
+1. Download `GridLayout.spoon.zip` from
+   [`jesseleite/GridLayout.spoon` releases](https://github.com/jesseleite/GridLayout.spoon/releases)
+2. Download `WorkspaceManager.spoon.zip` from
+   [`TechDufus/WorkspaceManager.spoon` releases](https://github.com/TechDufus/WorkspaceManager.spoon/releases)
+3. Double click each `.spoon.zip` file, or unzip them into `~/.hammerspoon/Spoons/`
+
+Version guidance:
+
+- If you only use plain string cells, a released `GridLayout.spoon` build is fine.
+- If you use `cell.screen`, install upstream `GridLayout.spoon` `master` at `4d32c93` or later
+  until Jesse ships a tagged release that includes [PR #7](https://github.com/jesseleite/GridLayout.spoon/pull/7).
+
+For local development, symlink both spoon directories into `~/.hammerspoon/Spoons/` instead of
+installing the release zips.
 
 Then load and compose them from your Hammerspoon config.
 
@@ -323,6 +337,30 @@ lua tests/init_spec.lua
 
 GitHub Actions runs the same parser and spec checks on pushes and pull requests.
 
+### Release automation
+
+This repo ships releases through GitHub Actions:
+
+- `Release` is a manual workflow that either tags the current Spoon version or bumps semver first.
+- `Publish Release` runs on `v*` tags, builds `WorkspaceManager.spoon.zip`, generates a SHA-256
+  checksum, generates Hammerspoon-style `docs.json` plus Markdown API docs, and attaches the
+  release assets to the GitHub Release.
+
+Release strategy options:
+
+- `current`
+  Tags and publishes the version already checked into `init.lua`.
+- `patch`, `minor`, `major`
+  Bump `init.lua`, commit `chore(release): vX.Y.Z`, create tag `vX.Y.Z`, and publish the release.
+
+Local release helpers:
+
+```sh
+./scripts/version.sh current
+./scripts/version.sh next patch
+./scripts/package_spoon.sh 0.1.0 dist
+```
+
 ### What the current test harness covers
 
 - config validation for missing required keys
@@ -343,6 +381,7 @@ The highest-signal test setup is:
 2. symlink `~/.hammerspoon/Spoons/WorkspaceManager.spoon` to this repo
 3. symlink `~/.hammerspoon/Spoons/GridLayout.spoon` to a local
    [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) checkout
+   using `master` at `4d32c93` or later if you are testing `cell.screen`
 4. reload Hammerspoon after changes
 
 That lets you test:

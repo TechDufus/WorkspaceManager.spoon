@@ -1,0 +1,64 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Lua 5.4 and zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 zip
+
+      - name: Validate tag matches spoon version
+        run: |
+          release_version="${GITHUB_REF_NAME#v}"
+          spoon_version="$(./scripts/version.sh current)"
+
+          if [ "$release_version" != "$spoon_version" ]; then
+            echo "tag version ($release_version) does not match init.lua version ($spoon_version)" >&2
+            exit 1
+          fi
+
+      - name: Validate release build
+        run: |
+          luac5.4 -p init.lua workspace_manager.lua screens.lua summon.lua \
+            tests/init_spec.lua tests/runtime_spec.lua tests/summon_spec.lua
+          lua5.4 tests/runtime_spec.lua
+          lua5.4 tests/summon_spec.lua
+          lua5.4 tests/init_spec.lua
+
+      - name: Build spoon archive
+        run: ./scripts/package_spoon.sh "${GITHUB_REF_NAME#v}" dist
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          archive="dist/WorkspaceManager.spoon.zip"
+          checksum="dist/WorkspaceManager.spoon.zip.sha256"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$archive" "$checksum" --clobber
+          else
+            gh release create "$tag" "$archive" "$checksum" --title "$tag" --generate-notes
+          fi

@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: Release the current version or bump semver first
+        required: true
+        default: current
+        type: choice
+        options:
+          - current
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  cut-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Lua 5.4 and zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 zip
+
+      - name: Configure Git
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Compute release version
+        id: version
+        run: |
+          current_version="$(./scripts/version.sh current)"
+          latest_tag="$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)"
+          latest_version="${latest_tag#v}"
+          strategy="${{ inputs.strategy }}"
+
+          if [ "$strategy" = "current" ]; then
+            if [ -n "$latest_tag" ] && [ "$latest_version" = "$current_version" ]; then
+              echo "Version $current_version is already tagged as $latest_tag" >&2
+              exit 1
+            fi
+            release_version="$current_version"
+          else
+            if [ -n "$latest_tag" ] && [ "$latest_version" != "$current_version" ]; then
+              echo "init.lua version ($current_version) does not match latest tag ($latest_tag)" >&2
+              echo "Use strategy=current to release the checked-in version, or sync init.lua first." >&2
+              exit 1
+            fi
+
+            release_version="$(./scripts/version.sh next "$strategy")"
+            ./scripts/version.sh set "$release_version"
+          fi
+
+          echo "current=$current_version" >>"$GITHUB_OUTPUT"
+          echo "release=$release_version" >>"$GITHUB_OUTPUT"
+          echo "tag=v$release_version" >>"$GITHUB_OUTPUT"
+
+      - name: Validate Lua sources
+        run: |
+          luac5.4 -p init.lua workspace_manager.lua screens.lua summon.lua \
+            tests/init_spec.lua tests/runtime_spec.lua tests/summon_spec.lua
+          lua5.4 tests/runtime_spec.lua
+          lua5.4 tests/summon_spec.lua
+          lua5.4 tests/init_spec.lua
+          ./scripts/package_spoon.sh "${{ steps.version.outputs.release }}" dist
+
+      - name: Commit bumped version
+        if: ${{ inputs.strategy != 'current' }}
+        run: |
+          git add init.lua
+          git commit -m "chore(release): v${{ steps.version.outputs.release }}"
+
+      - name: Create release tag
+        run: git tag "${{ steps.version.outputs.tag }}"
+
+      - name: Push release commit and tag
+        run: |
+          if [ "${{ inputs.strategy }}" != "current" ]; then
+            git push origin HEAD:main
+          fi
+
+          git push origin "${{ steps.version.outputs.tag }}"
