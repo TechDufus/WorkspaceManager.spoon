@@ -170,6 +170,8 @@ For complete examples, see:
   Delay before reapplying after auto-opening apps.
 - `screenChangeDelaySeconds`
   Delay before reapplying after screen changes.
+- `captureWindowStateOnStart`
+  Snapshot currently open managed windows before the first apply on startup.
 - `summon`
   Summon-specific configuration table.
 
@@ -180,10 +182,23 @@ Built-in defaults:
 - `settingsKey = 'WorkspaceManager.spoon.screen_state.v1'`
 - `openAppReapplyDelaySeconds = 0.5`
 - `screenChangeDelaySeconds = 1`
+- `captureWindowStateOnStart = true`
 - `summon.placementDelaySeconds = 0.2`
 - `summon.placementAttempts = 10`
 
 If you do not provide `screenLayouts`, the first layout in `layouts` is used for every screen.
+
+### `captureWindowStateOnStart`
+
+`captureWindowStateOnStart` defaults to `true`.
+
+Before the first `:apply()` after `:start()`, WorkspaceManager snapshots the currently open managed
+windows and converts their live screen/cell placement into per-window overrides. That makes a
+Hammerspoon config reload preserve the workspace you already had open instead of snapping every
+managed window back to the raw layout defaults.
+
+Set it to `false` if you explicitly want startup reloads to rebuild from persisted layout/app
+state only.
 
 ### `screenLayouts`
 

@@ -11,9 +11,11 @@ local reapplyTimer = nil
 local defaultSettingsKey = 'WorkspaceManager.spoon.screen_state.v1'
 local defaultOpenAppReapplyDelaySeconds = 0.5
 local defaultScreenChangeDelaySeconds = 1
+local defaultCaptureWindowStateOnStart = true
 local settingsKey = defaultSettingsKey
 local openAppReapplyDelaySeconds = defaultOpenAppReapplyDelaySeconds
 local screenChangeDelaySeconds = defaultScreenChangeDelaySeconds
+local captureWindowStateOnStart = defaultCaptureWindowStateOnStart
 
 local state = {
   screens = {},
@@ -91,6 +93,10 @@ local function validateConfig()
 
   if type(screenChangeDelaySeconds) ~= 'number' or screenChangeDelaySeconds < 0 then
     configError('config.screenChangeDelaySeconds must be a non-negative number')
+  end
+
+  if type(captureWindowStateOnStart) ~= 'boolean' then
+    configError('config.captureWindowStateOnStart must be a boolean')
   end
 
   for appName, appConfig in pairs(apps) do
@@ -257,6 +263,11 @@ function M.configure(config)
   settingsKey = config.settingsKey or defaultSettingsKey
   openAppReapplyDelaySeconds = config.openAppReapplyDelaySeconds or defaultOpenAppReapplyDelaySeconds
   screenChangeDelaySeconds = config.screenChangeDelaySeconds or defaultScreenChangeDelaySeconds
+  if config.captureWindowStateOnStart == nil then
+    captureWindowStateOnStart = defaultCaptureWindowStateOnStart
+  else
+    captureWindowStateOnStart = config.captureWindowStateOnStart
+  end
 
   return M
 end
@@ -321,6 +332,7 @@ local function sanitizeWindowOverrides(windowOverrides)
         local normalizedWindowId = windowIdKey(windowId)
         local appName = config and config.app_name
         local numericCellIndex = tonumber(config and config.cell_index)
+        local source = config and config.source
 
         if normalizedWindowId
           and apps[appName]
@@ -331,6 +343,7 @@ local function sanitizeWindowOverrides(windowOverrides)
           normalized[layout.key][normalizedWindowId] = {
             app_name = appName,
             cell_index = numericCellIndex,
+            source = source == 'captured' and 'captured' or nil,
           }
         end
       end
@@ -436,6 +449,51 @@ local function clearPreferredWindow(screen, appName, windowId)
   if windowId == nil or preferredId == requestedId then
     bucket[appName] = nil
   end
+end
+
+local function geometryMatches(left, right)
+  if type(left) ~= 'table' or type(right) ~= 'table' then
+    return false
+  end
+
+  return tonumber(left.x) == tonumber(right.x)
+    and tonumber(left.y) == tonumber(right.y)
+    and tonumber(left.w) == tonumber(right.w)
+    and tonumber(left.h) == tonumber(right.h)
+end
+
+local function gridCellForWindow(window)
+  if not window or not hs.grid or type(hs.grid.get) ~= 'function' then
+    return nil
+  end
+
+  local ok, cell = pcall(hs.grid.get, window)
+  if not ok then
+    return nil
+  end
+
+  if type(cell) ~= 'table' or cell.x == nil or cell.y == nil or cell.w == nil or cell.h == nil then
+    return nil
+  end
+
+  return cell
+end
+
+local function cellGeometry(cell)
+  if cell == nil or not hs.geometry or type(hs.geometry.new) ~= 'function' then
+    return nil
+  end
+
+  local ok, geometry = pcall(hs.geometry.new, cell)
+  if not ok then
+    return nil
+  end
+
+  if type(geometry) ~= 'table' or geometry.x == nil or geometry.y == nil or geometry.w == nil or geometry.h == nil then
+    return nil
+  end
+
+  return geometry
 end
 
 local function windowsForAppOnScreen(appName, screen)
@@ -669,6 +727,17 @@ local function resolvedCellIndex(appName, screen, layout, window)
 
   local override = window and windowOverrideConfig(screen, layout.key, window) or nil
   if override and override.app_name == appName then
+    local appOverrides = appOverrideBucket(screen, layout.key, false)
+    local appOverrideCellIndex = appOverrides and appOverrides[appName] or nil
+    local defaultCellIndex = layout.apps[appName].cell
+
+    if override.source == 'captured'
+      and appOverrideCellIndex
+      and override.cell_index == defaultCellIndex
+      and appOverrideCellIndex ~= override.cell_index then
+      return appOverrideCellIndex
+    end
+
     return override.cell_index
   end
 
@@ -692,6 +761,27 @@ local function resolvedCellVariant(appName, screen, layout, window)
   local cellIndex = resolvedCellIndex(appName, screen, layout, window)
   local cell, cellScreen = resolvedCellVariantForIndex(cellIndex, screen, layout)
   return cell, cellScreen, cellIndex
+end
+
+local function cellIndexForWindow(appName, screen, layout, window)
+  local windowScreen = window and window:screen() or nil
+  local targetScreenId = screens.id(windowScreen)
+  local windowCell = gridCellForWindow(window)
+
+  if not targetScreenId or not windowCell or not layout or not layout.apps or not layout.apps[appName] then
+    return nil
+  end
+
+  for cellIndex, _ in ipairs(layout.cells or {}) do
+    local cell, cellScreen = resolvedCellVariantForIndex(cellIndex, screen, layout)
+    local destinationScreen = cellScreen or screen
+
+    if screens.id(destinationScreen) == targetScreenId and geometryMatches(cellGeometry(cell), windowCell) then
+      return cellIndex
+    end
+  end
+
+  return nil
 end
 
 local function moveWindowToScreen(window, targetScreen)
@@ -756,6 +846,7 @@ local function managedWindowsForAppOnScreen(appName, screen, layout)
   for _, window in ipairs(windows) do
     local windowId = windowIdKey(window)
     local override = windowId and windowOverrides[windowId] or nil
+    local effectiveCellIndex = override and resolvedCellIndex(appName, screen, layout, window) or nil
 
     if windowId
       and not assignedWindowIds[windowId]
@@ -764,7 +855,7 @@ local function managedWindowsForAppOnScreen(appName, screen, layout)
       assignedWindowIds[windowId] = true
       table.insert(assignments, {
         window = window,
-        cell_index = override.cell_index,
+        cell_index = effectiveCellIndex,
       })
     end
   end
@@ -805,7 +896,8 @@ local function syntheticLayout()
         local cell, cellScreen, variant = resolvedCellVariantForIndex(assignment.cell_index, screen, layout)
 
         if cell then
-          local targetScreenId = screens.id(cellScreen or screen) or screenId
+          local destinationScreen = cellScreen or screen
+          local targetScreenId = screens.id(destinationScreen) or screenId
           local compositeCellKey = table.concat({
             targetScreenId,
             layout.key,
@@ -818,7 +910,7 @@ local function syntheticLayout()
             table.insert(combinedLayout.cells, {
               {
                 cell = cell,
-                screen = targetScreenId,
+                screen = destinationScreen,
               },
             })
             compositeCellIndex = #combinedLayout.cells
@@ -845,6 +937,75 @@ local function syntheticLayout()
   end
 
   return combinedLayout, syntheticApps
+end
+
+local function captureLiveWindowState()
+  state.preferred_windows = {}
+
+  for _, screen in ipairs(screens.ordered()) do
+    local screenId = screens.id(screen)
+    local layout = M.currentLayout(screen)
+    local screenState = ensureScreenState(screen)
+
+    if screenId and layout and screenState then
+      local nextWindowOverrides = {}
+      state.preferred_windows[screenId] = {}
+
+      for appName, _ in pairs(layout.apps or {}) do
+        local application, windows = windowsForAppOnScreen(appName, screen)
+        local preferredWindow = nil
+
+        for _, window in ipairs(windows) do
+          local windowId = windowIdKey(window)
+          local cellIndex = cellIndexForWindow(appName, screen, layout, window)
+          local existingOverride = windowId and windowOverrideConfig(screen, layout.key, window) or nil
+
+          if cellIndex and windowId then
+            nextWindowOverrides[windowId] = {
+              app_name = appName,
+              cell_index = cellIndex,
+              source = 'captured',
+            }
+          elseif existingOverride and windowId and existingOverride.app_name == appName then
+            nextWindowOverrides[windowId] = {
+              app_name = appName,
+              cell_index = existingOverride.cell_index,
+              source = existingOverride.source,
+            }
+          elseif not preferredWindow then
+            preferredWindow = window
+          end
+        end
+
+        if application and not preferredWindow then
+          local appFocusedWindow = application:focusedWindow()
+          if appFocusedWindow
+            and appFocusedWindow:isStandard()
+            and screens.id(appFocusedWindow:screen()) == screenId then
+            preferredWindow = appFocusedWindow
+          end
+        end
+
+        if not preferredWindow then
+          local focusedWindow = hs.window.focusedWindow()
+          if focusedWindow
+            and focusedWindow:isStandard()
+            and appNameForWindow(focusedWindow) == appName
+            and screens.id(focusedWindow:screen()) == screenId then
+            preferredWindow = focusedWindow
+          end
+        end
+
+        if preferredWindow then
+          setPreferredWindow(screen, appName, preferredWindow)
+        end
+      end
+
+      screenState.window_overrides[layout.key] = nextWindowOverrides
+    end
+  end
+
+  persistState()
 end
 
 function M.defaultLayoutKey(screen)
@@ -1029,6 +1190,7 @@ function M.bindFocusedWindowToCell()
       windowOverrides[windowId] = {
         app_name = appName,
         cell_index = choice.cell_index,
+        source = nil,
       }
       clearPreferredWindow(screen, appName, window:id())
     end
@@ -1211,6 +1373,9 @@ function M.start(config)
   validateConfig()
   loadState()
   M.ensureScreenStates()
+  if captureWindowStateOnStart then
+    captureLiveWindowState()
+  end
   return M
 end
 

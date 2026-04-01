@@ -12,6 +12,24 @@ local function assertContains(haystack, needle, message)
   end
 end
 
+local function parseGridCell(value)
+  if type(value) ~= 'string' then
+    return value
+  end
+
+  local x, y, w, h = value:match('^(%-?%d+),(%-?%d+)%s+(%-?%d+)x(%-?%d+)$')
+  if not x then
+    return value
+  end
+
+  return {
+    x = tonumber(x),
+    y = tonumber(y),
+    w = tonumber(w),
+    h = tonumber(h),
+  }
+end
+
 local function newScreen(config)
   local screen = {
     _uuid = config.uuid,
@@ -159,6 +177,7 @@ local function buildEnvironment()
     _app = terminalApp,
     _screen = builtin,
     _frame = { x = 0, y = 0, w = 1200, h = 800 },
+    _gridCell = parseGridCell('0,0 40x40'),
   }
 
   function window:id()
@@ -276,11 +295,15 @@ local function buildEnvironment()
         table.insert(operations, 'grid.set:' .. targetScreen:name())
         targetWindow._screen = targetScreen
         targetWindow._cell = cell
+        targetWindow._gridCell = cell
+      end,
+      get = function(targetWindow)
+        return targetWindow._gridCell
       end,
     },
     geometry = {
       new = function(value)
-        return value
+        return parseGridCell(value)
       end,
     },
     chooser = {
@@ -621,6 +644,7 @@ do
     apps = standardApps(),
     layouts = twoCellLayouts(),
     settingsKey = 'workspace-manager.runtime-spec',
+    captureWindowStateOnStart = false,
   })
   reloadedRuntime.apply()
 
@@ -658,6 +682,7 @@ do
     apps = standardApps(),
     layouts = twoCellLayouts(),
     settingsKey = 'workspace-manager.app-override-spec',
+    captureWindowStateOnStart = false,
   })
   reloadedRuntime.apply()
 
@@ -683,6 +708,86 @@ do
 
   assertEqual(type(persisted), 'table', 'default state should be persisted under the spoon-specific settings key')
   assertEqual(persisted.screens['builtin-uuid'].app_overrides.fullscreen.Terminal, 2, 'default settings key should preserve persisted overrides')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+  local key = 'workspace-manager.capture-live-state'
+
+  env.window._screen = env.external
+  env.window._gridCell = parseGridCell('40,0 40x40')
+
+  env.storedSettings[key] = {
+    screens = {
+      ['builtin-uuid'] = {
+        layout_key = 'fullscreen',
+        variant = 1,
+        app_overrides = {},
+        window_overrides = {
+          fullscreen = {
+            ['101'] = {
+              app_name = 'Terminal',
+              cell_index = 1,
+            },
+          },
+        },
+      },
+      ['external-uuid'] = {
+        layout_key = 'fullscreen',
+        variant = 1,
+        app_overrides = {},
+        window_overrides = {},
+      },
+    },
+  }
+
+  local engine = newLayoutEngine()
+
+  runtime.start({
+    layoutEngine = engine,
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = key,
+  })
+  runtime.apply()
+
+  local persisted = env.storedSettings[key]
+  local builtinOverrides = persisted.screens['builtin-uuid'].window_overrides.fullscreen
+  local externalOverrides = persisted.screens['external-uuid'].window_overrides.fullscreen
+
+  assertEqual(builtinOverrides == nil or builtinOverrides['101'] == nil, true, 'startup capture should clear stale window overrides from the old screen')
+  assertEqual(externalOverrides['101'].cell_index, 2, 'startup capture should persist the live cell index on the current screen')
+  assertEqual(engine.layouts[1].cells[1][1].screen, env.external, 'reapplied layout should target the live screen after reload capture')
+  assertEqual(engine.layouts[1].cells[1][1].cell, '40,0 40x40', 'reapplied layout should restore the live cell after reload capture')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+  local key = 'workspace-manager.capture-default-screen-affinity'
+
+  env.window._screen = env.external
+  env.window._gridCell = parseGridCell('0,0 40x40')
+
+  local engine = newLayoutEngine()
+
+  runtime.start({
+    layoutEngine = engine,
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = key,
+  })
+  runtime.apply()
+
+  local persisted = env.storedSettings[key]
+  local builtinOverrides = persisted.screens['builtin-uuid'].window_overrides.fullscreen
+  local externalOverrides = persisted.screens['external-uuid'].window_overrides.fullscreen
+
+  assertEqual(builtinOverrides == nil or builtinOverrides['101'] == nil, true, 'startup capture should not keep a default-cell window attached to the old screen')
+  assertEqual(externalOverrides['101'].cell_index, 1, 'startup capture should persist default-cell windows on their live screen too')
+  assertEqual(engine.layouts[1].cells[1][1].screen, env.external, 'reapplied layout should preserve live screen affinity even for default-slot windows')
+  assertEqual(engine.layouts[1].cells[1][1].cell, '0,0 40x40', 'reapplied layout should preserve the default cell on the live screen')
 end
 
 print('runtime_spec ok')
