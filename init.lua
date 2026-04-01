@@ -19,7 +19,7 @@ M.name = 'WorkspaceManager'
 --- WorkspaceManager.version
 --- Variable
 --- The version of the Spoon.
-M.version = '0.1.4'
+M.version = '0.1.5'
 
 --- WorkspaceManager.author
 --- Variable
