@@ -49,9 +49,7 @@ that foundation instead of trying to reimplement the layout engine itself.
 - Explicit `cell.screen` routing is now supported upstream in
   [`jesseleite/GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) via
   [PR #7](https://github.com/jesseleite/GridLayout.spoon/pull/7), which merged on March 28, 2026.
-- As of March 29, 2026, the latest upstream release still predates that merge. If you depend on
-  `cell.screen`, pin upstream `master` at `4d32c93` or later until a tagged release includes
-  PR #7.
+- If you depend on `cell.screen`, use `GridLayout.spoon` `0.3.0` or later.
 
 ## Installation
 
@@ -66,8 +64,7 @@ For end users, install both spoons from their GitHub Releases:
 Version guidance:
 
 - If you only use plain string cells, a released `GridLayout.spoon` build is fine.
-- If you use `cell.screen`, install upstream `GridLayout.spoon` `master` at `4d32c93` or later
-  until Jesse ships a tagged release that includes [PR #7](https://github.com/jesseleite/GridLayout.spoon/pull/7).
+- If you use `cell.screen`, install upstream `GridLayout.spoon` `0.3.0` or later.
 
 For local development, symlink both spoon directories into `~/.hammerspoon/Spoons/` instead of
 installing the release zips.
@@ -134,7 +131,8 @@ For complete examples, see:
 - `:resetLayout([screen])`
   Clears overrides for the active layout on a screen and resets variant state.
 - `:bindFocusedWindowToCell()`
-  Persists a per-window cell override for the focused window.
+  Persists a per-window cell override for the focused window, including windows outside
+  `layout.apps`.
 - `:bindFocusedAppToCell()`
   Opens a chooser that persists a per-app cell override for the focused app on the active screen.
 - `:setAppCell(appName, cellIndex[, screen])`
@@ -171,7 +169,8 @@ For complete examples, see:
 - `screenChangeDelaySeconds`
   Delay before reapplying after screen changes.
 - `captureWindowStateOnStart`
-  Snapshot currently open managed windows before the first apply on startup.
+  Snapshot currently open managed windows before the first apply on startup while preserving any
+  existing explicit unmanaged window bindings.
 - `summon`
   Summon-specific configuration table.
 
@@ -195,7 +194,8 @@ If you do not provide `screenLayouts`, the first layout in `layouts` is used for
 Before the first `:apply()` after `:start()`, WorkspaceManager snapshots the currently open managed
 windows and converts their live screen/cell placement into per-window overrides. That makes a
 Hammerspoon config reload preserve the workspace you already had open instead of snapping every
-managed window back to the raw layout defaults.
+managed window back to the raw layout defaults. Existing explicit `bindFocusedWindowToCell()`
+overrides for unmanaged windows are preserved across that capture step.
 
 Set it to `false` if you explicitly want startup reloads to rebuild from persisted layout/app
 state only.
@@ -338,8 +338,12 @@ Preferred window tracking is intentionally runtime-only and is not persisted.
 - single-window moves should not trigger a full workspace flicker
 - `moveFocusedWindowToNextScreen()` is focused-window-only
 - per-app overrides set the default slot for a managed app on the active screen/layout
+- `bindFocusedWindowToCell()` can target any focused standard window, not just apps listed in
+  `layout.apps`
 - per-window `bindFocusedWindowToCell()` overrides can coexist with default app slots
 - per-window overrides win over per-app overrides for the same window
+- if a window has active per-window overrides on multiple current screen layouts, the window's
+  current screen wins during reapply
 - if only one screen is present, next/previous screen movement is a no-op
 - cross-screen terminal moves intentionally do a fast two-step move-then-snap to avoid wrong-size frames on terminal-like apps
 
@@ -405,8 +409,8 @@ The highest-signal test setup is:
 1. keep your local Hammerspoon config in `~/.hammerspoon/init.lua`
 2. symlink `~/.hammerspoon/Spoons/WorkspaceManager.spoon` to this repo
 3. symlink `~/.hammerspoon/Spoons/GridLayout.spoon` to a local
-   [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) checkout
-   using `master` at `4d32c93` or later if you are testing `cell.screen`
+   [`GridLayout.spoon`](https://github.com/jesseleite/GridLayout.spoon) checkout or release
+   install
 4. reload Hammerspoon after changes
 
 That lets you test:

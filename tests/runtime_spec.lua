@@ -172,64 +172,91 @@ local function buildEnvironment()
     name = 'Terminal',
   })
 
-  local window = {
-    _id = 101,
-    _app = terminalApp,
-    _screen = builtin,
-    _frame = { x = 0, y = 0, w = 1200, h = 800 },
-    _gridCell = parseGridCell('0,0 40x40'),
-  }
+  local unmanagedApp = newApp({
+    bundleID = 'com.example.unmanaged',
+    name = 'Unmanaged',
+  })
 
-  function window:id()
-    return self._id
-  end
+  local function createWindow(config)
+    local window = {
+      _id = config.id,
+      _app = config.app,
+      _screen = config.screen,
+      _frame = config.frame,
+      _gridCell = parseGridCell(config.gridCell),
+    }
 
-  function window:application()
-    return self._app
-  end
+    function window:id()
+      return self._id
+    end
 
-  function window:screen()
-    return self._screen
-  end
+    function window:application()
+      return self._app
+    end
 
-  function window:frame()
-    return self._frame
-  end
+    function window:screen()
+      return self._screen
+    end
 
-  function window:setTopLeft(x, y)
-    table.insert(operations, string.format('setTopLeft:%s,%s', tostring(x), tostring(y)))
-    self._frame.x = x
-    self._frame.y = y
+    function window:frame()
+      return self._frame
+    end
 
-    for _, screen in ipairs(allScreens) do
-      local frame = screen:frame()
-      if frame.x == x and frame.y == y then
-        self._screen = screen
+    function window:setTopLeft(x, y)
+      table.insert(operations, string.format('setTopLeft:%s,%s', tostring(x), tostring(y)))
+      self._frame.x = x
+      self._frame.y = y
+
+      for _, screen in ipairs(allScreens) do
+        local frame = screen:frame()
+        if frame.x == x and frame.y == y then
+          self._screen = screen
+        end
       end
     end
+
+    function window:setFrame(frame)
+      table.insert(operations, string.format('setFrame:%s', self._screen:name()))
+      self._frame = frame
+      return self
+    end
+
+    function window:isStandard()
+      return true
+    end
+
+    function window:focus()
+      focusedWindow = self
+      table.insert(operations, 'focus')
+      return self
+    end
+
+    return window
   end
 
-  function window:setFrame(frame)
-    table.insert(operations, string.format('setFrame:%s', self._screen:name()))
-    self._frame = frame
-    return self
-  end
+  local window = createWindow({
+    id = 101,
+    app = terminalApp,
+    screen = builtin,
+    frame = { x = 0, y = 0, w = 1200, h = 800 },
+    gridCell = '0,0 40x40',
+  })
 
-  function window:isStandard()
-    return true
-  end
-
-  function window:focus()
-    focusedWindow = self
-    table.insert(operations, 'focus')
-    return self
-  end
+  local unmanagedWindow = createWindow({
+    id = 202,
+    app = unmanagedApp,
+    screen = builtin,
+    frame = { x = 0, y = 0, w = 1000, h = 700 },
+    gridCell = '0,0 40x40',
+  })
 
   terminalApp._windows = { window }
+  unmanagedApp._windows = { unmanagedWindow }
   focusedWindow = window
 
   local appsById = {
     ['com.mitchellh.ghostty'] = terminalApp,
+    ['com.example.unmanaged'] = unmanagedApp,
   }
 
   hs = {
@@ -337,7 +364,9 @@ local function buildEnvironment()
     builtin = builtin,
     external = external,
     terminalApp = terminalApp,
+    unmanagedApp = unmanagedApp,
     window = window,
+    unmanagedWindow = unmanagedWindow,
     operations = operations,
     timerCalls = timerCalls,
     alerts = alerts,
@@ -350,6 +379,9 @@ local function buildEnvironment()
       if chooserCallback then
         chooserCallback(choice)
       end
+    end,
+    focusWindow = function(targetWindow)
+      focusedWindow = targetWindow
     end,
   }
 end
@@ -649,6 +681,123 @@ do
   reloadedRuntime.apply()
 
   assertEqual(reloadedEngine.layouts[1].cells[1][1].cell, '40,0 40x40', 'reloaded state should restore the persisted per-window override cell')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+  local key = 'workspace-manager.unmanaged-window-bind-spec'
+
+  env.focusWindow(env.unmanagedWindow)
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = key,
+  })
+
+  runtime.bindFocusedWindowToCell()
+  assertEqual(#env.chooserChoices(), 2, 'unmanaged focused-window binding should offer each layout cell as a target')
+  assertEqual(#env.alerts, 0, 'unmanaged focused-window binding should not alert when the window is outside layout.apps')
+
+  env.choose({
+    cell_index = 2,
+  })
+
+  local persisted = env.storedSettings[key]
+  local screenState = persisted.screens['builtin-uuid']
+  local windowOverride = screenState.window_overrides.fullscreen['202']
+
+  assertEqual(windowOverride.app_name, nil, 'unmanaged window bindings should not invent a logical app name')
+  assertEqual(windowOverride.app_id, 'com.example.unmanaged', 'unmanaged window bindings should persist the live app identifier')
+  assertEqual(windowOverride.cell_index, 2, 'unmanaged window bindings should persist the selected cell')
+
+  local reloadedRuntime = loadRuntime()
+  local reloadedEngine = newLayoutEngine()
+
+  reloadedRuntime.start({
+    layoutEngine = reloadedEngine,
+    apps = standardApps(),
+    layouts = twoCellLayouts(),
+    settingsKey = key,
+  })
+  reloadedRuntime.apply()
+
+  local syntheticKey = 'com.example.unmanaged:builtin-uuid:202'
+  local syntheticCellIndex = reloadedEngine.layouts[1].apps[syntheticKey].cell
+
+  assertEqual(reloadedEngine.layouts[1].cells[syntheticCellIndex][1].cell, '40,0 40x40', 'startup capture should preserve unmanaged window overrides across reload')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+  local key = 'workspace-manager.unmanaged-screen-affinity-spec'
+
+  env.unmanagedWindow._screen = env.external
+
+  env.storedSettings[key] = {
+    screens = {
+      ['builtin-uuid'] = {
+        layout_key = 'fullscreen',
+        variant = 1,
+        app_overrides = {},
+        window_overrides = {
+          fullscreen = {
+            ['202'] = {
+              app_id = 'com.example.unmanaged',
+              cell_index = 1,
+            },
+          },
+        },
+      },
+      ['external-uuid'] = {
+        layout_key = 'fullscreen',
+        variant = 1,
+        app_overrides = {},
+        window_overrides = {
+          fullscreen = {
+            ['202'] = {
+              app_id = 'com.example.unmanaged',
+              cell_index = 1,
+            },
+          },
+          fourk = {
+            ['202'] = {
+              app_id = 'com.example.unmanaged',
+              cell_index = 1,
+            },
+          },
+        },
+      },
+    },
+  }
+
+  local engine = newLayoutEngine()
+
+  runtime.start({
+    layoutEngine = engine,
+    apps = standardApps(),
+    layouts = standardLayouts(),
+    settingsKey = key,
+    captureWindowStateOnStart = false,
+  })
+  runtime.selectLayout('fourk', env.external)
+  runtime.apply()
+
+  local syntheticKey = nil
+  for keyName, _ in pairs(engine.layouts[1].apps) do
+    if keyName:match(':202$') then
+      syntheticKey = keyName
+      break
+    end
+  end
+
+  assertEqual(type(syntheticKey), 'string', 'competing unmanaged overrides should still synthesize a placement for the window')
+  local syntheticCellIndex = engine.layouts[1].apps[syntheticKey].cell
+
+  assertEqual(engine.layouts[1].cells[syntheticCellIndex][1].screen, env.external, 'competing unmanaged overrides should keep a live second-screen window on its current screen')
 end
 
 do
