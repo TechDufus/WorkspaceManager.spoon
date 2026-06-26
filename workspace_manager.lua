@@ -669,13 +669,29 @@ end
 
 local function ensureOpenApps()
   local opened = false
+  local seenOpenApps = {}
 
   for _, screen in ipairs(screens.ordered()) do
     local layout = M.currentLayout(screen)
     for appName, appConfig in pairs(layout.apps or {}) do
-      if appConfig.open and not appObject(appName) then
-        hs.application.open(apps[appName].id or appName)
-        opened = true
+      local app = apps[appName]
+      local appId = app and app.id
+
+      if appConfig.open and app and not seenOpenApps[appId] and not appObject(appName) then
+        seenOpenApps[appId] = true
+        local appOpened = false
+
+        if type(hs.application.launchOrFocusByBundleID) == 'function' then
+          appOpened = hs.application.launchOrFocusByBundleID(appId)
+        end
+
+        if not appOpened then
+          appOpened = hs.application.open(appId) ~= nil
+        end
+
+        if appOpened then
+          opened = true
+        end
       end
     end
   end
