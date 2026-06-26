@@ -123,6 +123,9 @@ local function buildEnvironment()
   local alerts = {}
   local operations = {}
   local openedApps = {}
+  local launchedApps = {}
+  local launchOutcomes = {}
+  local openOutcomes = {}
   local focusedWindow = nil
   local chooserCallback = nil
   local chooserChoices = nil
@@ -287,8 +290,25 @@ local function buildEnvironment()
       find = function(identifier)
         return appsById[identifier]
       end,
+      launchOrFocusByBundleID = function(identifier)
+        launchedApps[identifier] = (launchedApps[identifier] or 0) + 1
+        if launchOutcomes[identifier] ~= nil then
+          return launchOutcomes[identifier]
+        end
+
+        return appsById[identifier] ~= nil
+      end,
       open = function(identifier)
         openedApps[identifier] = (openedApps[identifier] or 0) + 1
+        local outcome = openOutcomes[identifier]
+        if outcome ~= nil then
+          if outcome then
+            return outcome
+          end
+
+          return nil
+        end
+
         return appsById[identifier]
       end,
       frontmostApplication = function()
@@ -371,6 +391,9 @@ local function buildEnvironment()
     timerCalls = timerCalls,
     alerts = alerts,
     openedApps = openedApps,
+    launchedApps = launchedApps,
+    launchOutcomes = launchOutcomes,
+    openOutcomes = openOutcomes,
     storedSettings = storedSettings,
     chooserChoices = function()
       return chooserChoices
@@ -458,6 +481,47 @@ local function twoCellLayouts()
       apps = {
         Terminal = { cell = 1 },
       },
+    },
+  }
+end
+
+local function openAppLayouts(appName)
+  return {
+    {
+      key = 'with-open-app',
+      name = 'Open App Workspace',
+      cells = {
+        { '0,0 80x40' },
+      },
+      apps = {
+        [appName] = { cell = 1, open = true },
+      },
+    },
+    {
+      key = 'without-open-app',
+      name = 'Workspace Without Open App',
+      cells = {
+        { '0,0 80x40' },
+      },
+      apps = {},
+    },
+  }
+end
+
+local function openAppScreenLayouts()
+  return {
+    layouts = {
+      ['builtin-uuid'] = 'with-open-app',
+      ['external-uuid'] = 'without-open-app',
+    },
+  }
+end
+
+local function duplicateOpenAppScreenLayouts()
+  return {
+    layouts = {
+      ['builtin-uuid'] = 'with-open-app',
+      ['external-uuid'] = 'with-open-app',
     },
   }
 end
@@ -624,6 +688,75 @@ do
 
   runtime.handleScreenChange()
   assertEqual(env.timerCalls[#env.timerCalls], 2.5, 'custom screen change delay should be respected')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = {
+      Missing = {
+        id = 'com.example.missing',
+      },
+    },
+    layouts = openAppLayouts('Missing'),
+    screenLayouts = openAppScreenLayouts(),
+    openAppReapplyDelaySeconds = 1.25,
+  })
+  runtime.apply()
+
+  assertEqual(env.launchedApps['com.example.missing'], 1, 'missing open app should be attempted with launchOrFocusByBundleID')
+  assertEqual(env.openedApps['com.example.missing'], 1, 'missing open app should fall back to open after launch fails')
+  assertEqual(#env.timerCalls, 0, 'missing open app should not schedule reapply when launch and open fail')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = {
+      Missing = {
+        id = 'com.example.missing',
+      },
+    },
+    layouts = openAppLayouts('Missing'),
+    screenLayouts = duplicateOpenAppScreenLayouts(),
+    openAppReapplyDelaySeconds = 1.25,
+  })
+  runtime.apply()
+
+  assertEqual(env.launchedApps['com.example.missing'], 1, 'duplicate active open app should be attempted once with launchOrFocusByBundleID')
+  assertEqual(env.openedApps['com.example.missing'], 1, 'duplicate active open app should fall back to open once after launch fails')
+  assertEqual(#env.timerCalls, 0, 'duplicate failed open app should not schedule reapply')
+end
+
+do
+  local env = buildEnvironment()
+  local runtime = loadRuntime()
+
+  env.launchOutcomes['com.example.launchable'] = true
+
+  runtime.start({
+    layoutEngine = newLayoutEngine(),
+    apps = {
+      Launchable = {
+        id = 'com.example.launchable',
+      },
+    },
+    layouts = openAppLayouts('Launchable'),
+    screenLayouts = openAppScreenLayouts(),
+    openAppReapplyDelaySeconds = 1.75,
+  })
+  runtime.apply()
+
+  assertEqual(env.launchedApps['com.example.launchable'], 1, 'launchable open app should be attempted with launchOrFocusByBundleID')
+  assertEqual(env.openedApps['com.example.launchable'], nil, 'launchable open app should not fall back to open after launch succeeds')
+  assertEqual(#env.timerCalls, 1, 'launchable open app should schedule one reapply timer')
+  assertEqual(env.timerCalls[1], 1.75, 'launchable open app should schedule the configured reapply delay')
 end
 
 do
